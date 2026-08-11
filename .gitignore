@@ -1,3 +1,7 @@
 __pycache__/
 .DS_Store
 run_log_*.txt
+logs/
+node_modules/
+.venv/
+*.session.json

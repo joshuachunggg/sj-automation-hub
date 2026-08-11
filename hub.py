@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 import curses
+import os
 import shlex
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent
-AEM_PUBLISHING = Path("/Users/joshuachung/Documents/projects/aem-publishing/translation_pipeline")
-COMPONENT_COPIER = Path("/Users/joshuachung/Downloads/authoring")
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CHROME_PROFILE = "/tmp/aem-chrome"
 LOG_DIR = ROOT / "logs"
@@ -21,9 +21,8 @@ def main():
         choice = menu(
             "SJ Design Automation Hub",
             [
-                ("AEM FAQ Publishing", aem_publishing),
                 ("AEM Component Copier", component_copier),
-                ("Jira Login Setup", jira_login),
+                ("AEM FAQ QA", aem_faq_qa),
                 ("Logs", logs),
                 ("Quit", None),
             ],
@@ -36,17 +35,17 @@ def main():
 
 def menu(title, items, back=True):
     def draw(screen):
-        curses.curs_set(0)
+        setup_screen(screen)
         selected = 0
         while True:
             screen.erase()
             height, width = screen.getmaxyx()
-            screen.addnstr(1, 2, title, width - 4, curses.A_BOLD)
+            header(screen, title)
             for index, (label, _) in enumerate(items):
-                attr = curses.A_REVERSE if index == selected else curses.A_NORMAL
-                screen.addnstr(5 + index, 4, label, width - 8, attr)
+                attr = curses.color_pair(2) | curses.A_BOLD if index == selected else curses.color_pair(3)
+                screen.addnstr(5 + index, 4, f"{'›' if index == selected else ' '} {label}", width - 8, attr)
             shortcuts = " ↑/↓ move  Enter select  q quit " if not back else " ↑/↓ move  Enter select  b/Esc back "
-            screen.addnstr(height - 1, 0, shortcuts, width - 1, curses.A_REVERSE)
+            footer(screen, shortcuts)
             key = screen.getch()
             if key == ord("q") or (back and key in (ord("b"), 27)):
                 return None
@@ -58,32 +57,6 @@ def menu(title, items, back=True):
                 return items[selected][1]
 
     return curses.wrapper(draw)
-
-
-def aem_publishing():
-    if not panel(
-        "AEM FAQ Publishing",
-        [
-            "Publishes pending country columns from an Excel workbook through Jira.",
-            "Progress is saved back to the workbook as each live URL is confirmed.",
-            "Use Jira Login Setup first if the saved Jira session expired.",
-        ],
-        wait=True,
-    ):
-        return
-    workbook = ask_path("Workbook path", AEM_PUBLISHING / "mob27.xlsx")
-    if not workbook:
-        return
-    workers = ask("Parallel Jira tabs", "10")
-    if workers is None:
-        return
-    validate = confirm("Only validate already-published live URLs?", False)
-    if validate is None:
-        return
-    args = [python(), str(ROOT / "run_aem_publishing.py"), "--workbook", str(workbook), "--workers", workers]
-    if validate:
-        args.append("--validate-only")
-    run_logged("AEM FAQ Publishing", args)
 
 
 def component_copier():
@@ -98,8 +71,7 @@ def component_copier():
         wait=True,
     ):
         return
-    subprocess.Popen([CHROME, "--remote-debugging-port=9222", f"--user-data-dir={CHROME_PROFILE}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if not panel("Chrome Login", ["Log into AEM in the Chrome window that just opened.", "Return here when both source and target author domains are logged in."], wait=True):
+    if not ensure_aem_chrome(["Log into AEM in the Chrome window that just opened.", "Return here when both source and target author domains are logged in."]):
         return
     source = ask("Source/read page URL")
     if not source:
@@ -110,23 +82,47 @@ def component_copier():
     yes = confirm("Bypass per-component Enter prompts?", True)
     if yes is None:
         return
-    args = ["npm", "run", "aem:copy", "--", "--source", source, "--target", target]
+    args = ["node", str(ROOT / "copy-aem-components.mjs"), "--source", source, "--target", target]
     if yes:
         args.append("--yes")
     run_logged("AEM Component Copier", args, cwd=COMPONENT_COPIER)
 
 
-def jira_login():
+def aem_faq_qa():
     if not panel(
-        "Jira Login Setup",
+        "AEM FAQ QA",
         [
-            "Opens Jira in Chromium and saves a local session file.",
-            "Run this initially, or whenever publishing says the Jira session expired.",
+            "Audits and reviews each unapproved parent, then copies approved children.",
+            "It reuses the existing dev Chrome session when available.",
+            "Log into Global, Europe, and America before starting the full pass.",
         ],
         wait=True,
     ):
         return
-    run_login()
+    workbook = ask_path("FAQ workbook", None)
+    if not workbook:
+        return
+    mode = menu(
+        "AEM FAQ QA",
+        [
+            ("Show workbook plan", "plan"),
+            ("Audit, review, and copy", "review"),
+        ],
+    )
+    if not mode:
+        return
+    args = [python(), str(ROOT / "aem_faq_qa.py"), "--workbook", str(workbook)]
+    if mode == "plan":
+        args.append("--plan")
+        return run_logged("AEM FAQ QA Plan", args)
+
+    if not ensure_aem_chrome(["Log into Global, Europe, and America AEM in the Chrome window.", "Return here after all three author servers are ready."]):
+        return
+    if not confirm("Audit and review every unapproved parent, then copy approved children?", False):
+        return
+    args.append("--all")
+    args += ["--review", "--apply"]
+    run_logged("AEM FAQ QA Full Pass", args, review=True)
 
 
 def logs():
@@ -142,15 +138,15 @@ def logs():
 
 def panel(title, lines, wait=False):
     def draw(screen):
-        curses.curs_set(0)
+        setup_screen(screen)
         while True:
             screen.erase()
             height, width = screen.getmaxyx()
-            screen.addnstr(1, 2, title, width - 4, curses.A_BOLD)
+            header(screen, title)
             for row, line in enumerate(lines, 3):
                 screen.addnstr(row, 4, line, width - 8)
             label = " Enter continue  b/Esc back " if wait else " b/Esc back "
-            screen.addnstr(height - 1, 0, label, width - 1, curses.A_REVERSE)
+            footer(screen, label)
             if not wait:
                 screen.getch()
                 return True
@@ -165,14 +161,14 @@ def panel(title, lines, wait=False):
 
 def ask(label, default=None):
     def draw(screen):
-        curses.curs_set(1)
+        setup_screen(screen, cursor=True)
         value = default or ""
         while True:
             screen.erase()
             height, width = screen.getmaxyx()
-            screen.addnstr(2, 2, label, width - 4, curses.A_BOLD)
+            header(screen, label)
             screen.addnstr(4, 4, value, width - 8)
-            screen.addnstr(height - 1, 0, " Enter accept  Esc back  Backspace delete ", width - 1, curses.A_REVERSE)
+            footer(screen, " Enter accept  Esc back  Backspace delete ")
             key = screen.getch()
             if key in (10, 13):
                 return value.strip()
@@ -188,9 +184,15 @@ def ask(label, default=None):
 
 def ask_path(label, default):
     while True:
-        answer = ask(label, str(default))
+        answer = ask(label, str(default) if default else "")
         if answer is None:
             return None
+        if not answer:
+            picked = pick_file()
+            if picked:
+                answer = picked
+            else:
+                continue
         value = Path(answer).expanduser()
         if value.exists():
             return value
@@ -202,56 +204,74 @@ def confirm(label, default):
     return chosen
 
 
+def ensure_aem_chrome(login_lines):
+    if chrome_ready():
+        return True
+    subprocess.Popen([CHROME, "--remote-debugging-port=9222", f"--user-data-dir={CHROME_PROFILE}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return panel("Chrome Login", login_lines, wait=True)
+
+
+def chrome_ready():
+    try:
+        with urlopen("http://127.0.0.1:9222/json/version", timeout=0.2) as response:
+            return response.status == 200
+    except OSError:
+        return False
+
+
 def python():
-    venv = AEM_PUBLISHING / ".venv/bin/python"
-    return str(venv if venv.exists() else Path("/usr/bin/python3"))
+    return os.environ.get("PYTHON", "python3")
 
 
-def run_logged(title, args, cwd=None):
+def run_logged(title, args, cwd=None, review=False):
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-{slug(title)}.log"
     with log_path.open("w") as log:
         log.write("$ " + " ".join(shlex.quote(str(arg)) for arg in args) + "\n\n")
-        process = subprocess.Popen(args, cwd=cwd, stdout=log, stderr=subprocess.STDOUT)
-        wait_process(title, process, log_path)
+        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True)
+        wait_process(title, process, log_path, review)
 
 
-def run_login():
-    LOG_DIR.mkdir(exist_ok=True)
-    log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-jira-login-setup.log"
-    args = [str(AEM_PUBLISHING / ".venv/bin/python"), "auth_login.py"]
-    with log_path.open("w") as log:
-        log.write("$ " + " ".join(shlex.quote(str(arg)) for arg in args) + "\n\n")
-        process = subprocess.Popen(args, cwd=AEM_PUBLISHING, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True)
-        if panel("Jira Login", ["Complete SSO/MFA in the browser that opened.", "Press Enter here after Jira is fully loaded."], wait=True):
-            process.stdin.write("\n")
-            process.stdin.flush()
-            wait_process("Jira Login Setup", process, log_path)
-        else:
-            process.terminate()
-
-
-def wait_process(title, process, log_path):
+def wait_process(title, process, log_path, review=False):
     def draw(screen):
-        curses.curs_set(0)
+        setup_screen(screen)
+        screen.timeout(250)
         started = time.time()
+        handled_review = ""
         while process.poll() is None:
             screen.erase()
             height, width = screen.getmaxyx()
-            screen.addnstr(1, 2, title, width - 4, curses.A_BOLD)
-            screen.addnstr(3, 4, "Running in the background. Logs are being saved.", width - 8)
-            screen.addnstr(5, 4, f"Elapsed: {int(time.time() - started)}s", width - 8)
-            screen.addnstr(6, 4, f"Log: {log_path}", width - 8)
-            screen.addnstr(height - 1, 0, " Ctrl+C stop  logs available from hub ", width - 1, curses.A_REVERSE)
+            header(screen, title)
+            lines = log_path.read_text(errors="replace").splitlines()
+            progress = next((line for line in reversed(lines) if line.startswith("PROGRESS ")), "Running")
+            findings = sum(line.startswith("FINDING ") for line in lines)
+            copies = sum(line.startswith("COPY DONE ") for line in lines)
+            screen.addnstr(3, 4, progress, width - 8, curses.color_pair(2) | curses.A_BOLD)
+            screen.addnstr(4, 4, f"Elapsed {int(time.time() - started)}s", width // 3 - 6, curses.color_pair(3))
+            screen.addnstr(4, width // 3, f"Findings {findings}", width // 3 - 4, curses.color_pair(4))
+            screen.addnstr(4, 2 * width // 3, f"Copies {copies}", width // 3 - 4, curses.color_pair(5))
+            screen.addnstr(6, 4, "Recent activity", width - 8, curses.A_BOLD | curses.color_pair(3))
+            rows = max(1, height - 10)
+            for row, line in enumerate(lines[-rows:], 7):
+                screen.addnstr(row, 4, line, width - 8, curses.color_pair(3))
+            footer(screen, " Ctrl+C stop  live log is saved ")
             screen.refresh()
-            time.sleep(0.25)
+            if review:
+                pending = next((line for line in reversed(lines) if line.startswith("REVIEW ITEM ")), "")
+                if pending and pending != handled_review:
+                    handled_review = pending
+                    review_prompt(screen, process, lines, pending)
+                    continue
+            if screen.getch() == 3:
+                process.terminate()
+                return
         screen.erase()
         status = "completed" if process.returncode == 0 else f"exited with code {process.returncode}"
         height, width = screen.getmaxyx()
-        screen.addnstr(1, 2, title, width - 4, curses.A_BOLD)
+        header(screen, title)
         screen.addnstr(3, 4, f"Automation {status}.", width - 8)
         screen.addnstr(5, 4, f"Log: {log_path}", width - 8)
-        screen.addnstr(height - 1, 0, " Enter return to hub  l view log ", width - 1, curses.A_REVERSE)
+        footer(screen, " Enter return to hub  l view log ")
         while True:
             key = screen.getch()
             if key in (10, 13):
@@ -265,20 +285,66 @@ def wait_process(title, process, log_path):
         process.terminate()
 
 
+def review_prompt(screen, process, lines, review_line):
+    screen.timeout(-1)
+    _, _, target, link = review_line.split(" ", 3)
+    while True:
+        screen.erase()
+        height, width = screen.getmaxyx()
+        header(screen, f"Review {target}")
+        screen.addnstr(3, 4, link, width - 8)
+        findings = [line for line in lines if line.startswith(f"FINDING {target}:")]
+        screen.addnstr(5, 4, "Found:", width - 8, curses.A_BOLD)
+        shown = findings or ["No heuristic differentials found."]
+        for row, finding in enumerate(shown[-max(1, height - 9):], 6):
+            screen.addnstr(row, 4, finding, width - 8)
+        footer(screen, " y approve and write row 3   n skip (then optional note) ")
+        key = screen.getch()
+        if key == ord("y"):
+            process.stdin.write("y\n")
+            process.stdin.flush()
+            screen.timeout(250)
+            return
+        if key == ord("n"):
+            process.stdin.write(f"n {review_note(screen)}\n")
+            process.stdin.flush()
+            screen.timeout(250)
+            return
+
+
+def review_note(screen):
+    value = ""
+    while True:
+        screen.erase()
+        height, width = screen.getmaxyx()
+        header(screen, "Optional review note")
+        screen.addnstr(4, 4, value, width - 8)
+        footer(screen, " Enter save note  Esc no note ")
+        key = screen.getch()
+        if key in (10, 13):
+            return value.strip()
+        if key == 27:
+            return ""
+        if key in (curses.KEY_BACKSPACE, 127, 8):
+            value = value[:-1]
+        elif 32 <= key <= 126:
+            value += chr(key)
+
+
 def view_log(path):
     text = path.read_text(errors="replace").splitlines()
     def draw(screen):
-        curses.curs_set(0)
+        setup_screen(screen)
         offset = max(0, len(text) - 1)
         while True:
             screen.erase()
             height, width = screen.getmaxyx()
-            screen.addnstr(0, 2, path.name, width - 4, curses.A_BOLD)
-            rows = height - 2
+            header(screen, path.name)
+            rows = height - 4
             start = max(0, min(offset, len(text) - rows))
-            for row, line in enumerate(text[start:start + rows], 1):
+            for row, line in enumerate(text[start:start + rows], 3):
                 screen.addnstr(row, 0, line, width - 1)
-            screen.addnstr(height - 1, 0, " ↑/↓ scroll  b/Esc back  q quit ", width - 1, curses.A_REVERSE)
+            footer(screen, " ↑/↓ scroll  b/Esc back  q quit ")
             key = screen.getch()
             if key in (ord("b"), ord("q"), 27):
                 return
@@ -292,6 +358,40 @@ def view_log(path):
 
 def slug(value):
     return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-")
+
+
+def pick_file():
+    """Use the native macOS chooser; return empty when it is cancelled or unavailable."""
+    if os.uname().sysname != "Darwin":
+        return ""
+    result = subprocess.run(
+        ["osascript", "-e", 'POSIX path of (choose file with prompt "Choose FAQ workbook" of type {"org.openxmlformats.spreadsheetml.sheet"})'],
+        text=True, capture_output=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def setup_screen(screen, cursor=False):
+    curses.curs_set(1 if cursor else 0)
+    if curses.has_colors():
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
+        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_CYAN)
+        curses.init_pair(3, curses.COLOR_WHITE, -1)
+        curses.init_pair(4, curses.COLOR_YELLOW, -1)
+        curses.init_pair(5, curses.COLOR_GREEN, -1)
+
+
+def header(screen, title):
+    height, width = screen.getmaxyx()
+    screen.addnstr(1, 2, title, width - 4, curses.A_BOLD | curses.color_pair(2))
+    screen.hline(2, 2, curses.ACS_HLINE, max(0, width - 4), curses.color_pair(2))
+
+
+def footer(screen, text):
+    height, width = screen.getmaxyx()
+    screen.addnstr(height - 1, 0, text, width - 1, curses.color_pair(1) | curses.A_BOLD)
 
 
 if __name__ == "__main__":

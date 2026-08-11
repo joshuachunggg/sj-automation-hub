@@ -1,17 +1,35 @@
 # SJ Design Automation Hub
 
-Local terminal hub for SJ Design automations.
+Terminal hub for the AEM FAQ QA and component-copy workflows.
 
 ## Run
 
 ```sh
-cd /Users/joshuachung/Documents/projects/sj-automation-hub
+git clone https://github.com/joshuachunggg/sj-automation-hub.git
+cd sj-automation-hub
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+npm install
 python3 hub.py
 ```
 
 ## Current Automations
 
-- AEM FAQ Publishing: wraps `/Users/joshuachung/Documents/projects/aem-publishing/translation_pipeline` without editing that repo.
-- AEM Component Copier: wraps `/Users/joshuachung/Downloads/authoring`.
+- AEM Component Copier: copies missing AEM components between author pages.
+- AEM FAQ QA: audits the three-server FAQ workbook and copies approved parent content into child locales through logged-in AEM Chrome.
 
-The hub is intentionally local. No hosting, no remote server, no extra dependencies.
+The hub is standalone: it needs only the declared Python and Node dependencies, plus Google Chrome. Start Chrome through the hub so the workflows can reuse its logged-in session.
+
+## AEM FAQ QA
+
+Open the hub and choose `AEM FAQ QA`. Press Enter on the blank workbook field to open the native macOS file picker. Or run a plan directly:
+
+```sh
+python3 aem_faq_qa.py --workbook ./your-workbook.xlsx --plan
+```
+
+For a full pass, log into Global, Europe, and America in dev Chrome. `Audit, review, and copy` audits one parent at a time, opens its editor in the review tab, and shows every heuristic finding before approval. It checks component settings, repeated punctuation, inconsistent bold numbered step labels, and punctuation consistency after each translated step label. Press `y` to write its editor URL to row 3, or `n` to skip with an optional log note. Approved parents are then copied into their children during the same pass, up to three at a time.
+
+```sh
+python3 aem_faq_qa.py --workbook ./your-workbook.xlsx --all --review --apply
+```
