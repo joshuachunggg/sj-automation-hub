@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 import curses
 import os
+import platform
 import shlex
+import shutil
 import subprocess
+import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-CHROME_PROFILE = "/tmp/aem-chrome"
+CHROME_PROFILE = Path(tempfile.gettempdir()) / "aem-chrome"
 LOG_DIR = ROOT / "logs"
 
 
@@ -85,7 +88,7 @@ def component_copier():
     args = ["node", str(ROOT / "copy-aem-components.mjs"), "--source", source, "--target", target]
     if yes:
         args.append("--yes")
-    run_logged("AEM Component Copier", args, cwd=COMPONENT_COPIER)
+    run_logged("AEM Component Copier", args)
 
 
 def aem_faq_qa():
@@ -207,7 +210,11 @@ def confirm(label, default):
 def ensure_aem_chrome(login_lines):
     if chrome_ready():
         return True
-    subprocess.Popen([CHROME, "--remote-debugging-port=9222", f"--user-data-dir={CHROME_PROFILE}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    chrome = chrome_command()
+    if not chrome:
+        panel("Chrome Not Found", ["Install Google Chrome, or set CHROME to its executable path."], wait=True)
+        return False
+    subprocess.Popen([chrome, "--remote-debugging-port=9222", f"--user-data-dir={CHROME_PROFILE}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return panel("Chrome Login", login_lines, wait=True)
 
 
@@ -220,7 +227,7 @@ def chrome_ready():
 
 
 def python():
-    return os.environ.get("PYTHON", "python3")
+    return os.environ.get("PYTHON", sys.executable)
 
 
 def run_logged(title, args, cwd=None, review=False):
@@ -361,14 +368,40 @@ def slug(value):
 
 
 def pick_file():
-    """Use the native macOS chooser; return empty when it is cancelled or unavailable."""
-    if os.uname().sysname != "Darwin":
+    """Use the platform file chooser; return empty when it is cancelled or unavailable."""
+    if platform.system() == "Darwin":
+        result = subprocess.run(
+            ["osascript", "-e", 'POSIX path of (choose file with prompt "Choose FAQ workbook" of type {"org.openxmlformats.spreadsheetml.sheet"})'],
+            text=True, capture_output=True,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    try:
+        from tkinter import Tk, filedialog
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected = filedialog.askopenfilename(title="Choose FAQ workbook", filetypes=[("Excel workbooks", "*.xlsx")])
+        root.destroy()
+        return selected
+    except Exception:
         return ""
-    result = subprocess.run(
-        ["osascript", "-e", 'POSIX path of (choose file with prompt "Choose FAQ workbook" of type {"org.openxmlformats.spreadsheetml.sheet"})'],
-        text=True, capture_output=True,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def chrome_command():
+    configured = os.environ.get("CHROME")
+    if configured:
+        return configured
+    system = platform.system()
+    candidates = {
+        "Darwin": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+        "Windows": [
+            str(Path(folder) / "Google/Chrome/Application/chrome.exe")
+            for folder in (os.environ.get("LOCALAPPDATA"), os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"))
+            if folder
+        ],
+    }.get(system, [])
+    candidates.extend(filter(None, (shutil.which(name) for name in ("google-chrome", "chromium", "chromium-browser", "chrome"))))
+    return next((candidate for candidate in candidates if Path(candidate).exists()), None)
 
 
 def setup_screen(screen, cursor=False):

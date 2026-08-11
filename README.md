@@ -13,6 +13,8 @@ npm install
 python3 hub.py
 ```
 
+On Windows, use `py -m venv .venv`, `.venv\\Scripts\\pip install -r requirements.txt`, then `py hub.py`. The requirements install `windows-curses` automatically. Chrome is found in its usual Windows location; set `CHROME` to the executable path if yours is installed elsewhere.
+
 ## Current Automations
 
 - AEM Component Copier: copies missing AEM components between author pages.
@@ -22,7 +24,7 @@ The hub is standalone: it needs only the declared Python and Node dependencies, 
 
 ## AEM FAQ QA
 
-Open the hub and choose `AEM FAQ QA`. Press Enter on the blank workbook field to open the native macOS file picker. Or run a plan directly:
+Open the hub and choose `AEM FAQ QA`. Press Enter on the blank workbook field to open the native file picker. Or run a plan directly:
 
 ```sh
 python3 aem_faq_qa.py --workbook ./your-workbook.xlsx --plan

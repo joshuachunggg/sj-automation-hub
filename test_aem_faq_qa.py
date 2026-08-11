@@ -8,7 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
 from aem_faq_qa import audit_findings, column_kind, detail_ids, parent_for_child, parse_args, review_answer, review_parent, text_findings
-from hub import chrome_ready, pick_file
+from hub import chrome_command, chrome_ready, pick_file
 
 
 class AemFaqQaTest(unittest.TestCase):
@@ -74,10 +74,16 @@ class AemFaqQaTest(unittest.TestCase):
             self.assertFalse(chrome_ready())
 
     def test_picker_returns_the_native_selection(self):
-        with patch("hub.os.uname", return_value=SimpleNamespace(sysname="Darwin")), patch(
+        with patch("hub.platform.system", return_value="Darwin"), patch(
             "hub.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="/tmp/faq.xlsx\n")
         ):
             self.assertEqual(pick_file(), "/tmp/faq.xlsx")
+
+    def test_chrome_command_uses_windows_standard_location(self):
+        with patch("hub.platform.system", return_value="Windows"), patch.dict(
+            "hub.os.environ", {"LOCALAPPDATA": "C:/Users/test/AppData/Local"}, clear=True
+        ), patch("hub.Path.exists", return_value=True):
+            self.assertEqual(chrome_command(), "C:/Users/test/AppData/Local/Google/Chrome/Application/chrome.exe")
 
 
 if __name__ == "__main__":
