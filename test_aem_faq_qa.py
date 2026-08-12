@@ -7,7 +7,7 @@ logging.disable(logging.CRITICAL)
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-from aem_faq_qa import audit_findings, column_kind, detail_ids, parent_for_child, parse_args, review_answer, review_parent, text_findings
+from aem_faq_qa import audit_findings, column_kind, detail_ids, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
 from hub import chrome_command, chrome_ready, pick_file
 
 
@@ -84,6 +84,17 @@ class AemFaqQaTest(unittest.TestCase):
             "hub.os.environ", {"LOCALAPPDATA": "C:/Users/test/AppData/Local"}, clear=True
         ), patch("hub.Path.exists", return_value=True):
             self.assertEqual(chrome_command(), "C:/Users/test/AppData/Local/Google/Chrome/Application/chrome.exe")
+
+    def test_audit_failure_without_stderr_does_not_stop_the_pass(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Global"
+        ws.cell(8, 2).value = "sg"
+        ws.cell(13, 2).value = "example"
+        args = SimpleNamespace(apply=False, review=False, copy_workers=1)
+        error = __import__("subprocess").CalledProcessError(1, ["node"], stderr="")
+        with patch("aem_faq_qa.audit_page", side_effect=error):
+            run_all(wb, args)
 
 
 if __name__ == "__main__":

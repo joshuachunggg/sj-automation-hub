@@ -109,7 +109,8 @@ def run_all(wb, args):
             audit = audit_page(host_for(ws, ws.title), article_path(ws, col), link if args.review and not ws.cell(3, col).value else "")
         except subprocess.CalledProcessError as error:
             findings += 1
-            print(f"FINDING {ws.title}/{site}: audit failed: {error.stderr.strip().splitlines()[-1]}", flush=True)
+            detail = (error.stderr or error.stdout or str(error)).strip().splitlines()
+            print(f"FINDING {ws.title}/{site}: audit failed: {detail[-1] if detail else error}", flush=True)
             continue
         baseline = baselines.setdefault(ws.title, audit)
         for finding in audit_findings(audit, baseline):

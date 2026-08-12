@@ -235,7 +235,8 @@ def run_logged(title, args, cwd=None, review=False):
     log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-{slug(title)}.log"
     with log_path.open("w") as log:
         log.write("$ " + " ".join(shlex.quote(str(arg)) for arg in args) + "\n\n")
-        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True)
+        log.flush()
+        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1)
         wait_process(title, process, log_path, review)
 
 
@@ -267,7 +268,9 @@ def wait_process(title, process, log_path, review=False):
                 pending = next((line for line in reversed(lines) if line.startswith("REVIEW ITEM ")), "")
                 if pending and pending != handled_review:
                     handled_review = pending
-                    review_prompt(screen, process, lines, pending)
+                    if not review_prompt(screen, process, lines, pending):
+                        process.terminate()
+                        return
                     continue
             if screen.getch() == 3:
                 process.terminate()
@@ -311,12 +314,15 @@ def review_prompt(screen, process, lines, review_line):
             process.stdin.write("y\n")
             process.stdin.flush()
             screen.timeout(250)
-            return
+            return True
         if key == ord("n"):
             process.stdin.write(f"n {review_note(screen)}\n")
             process.stdin.flush()
             screen.timeout(250)
-            return
+            return True
+        if key in (27, ord("b")):
+            screen.timeout(250)
+            return False
 
 
 def review_note(screen):
