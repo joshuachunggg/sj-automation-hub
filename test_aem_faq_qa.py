@@ -48,6 +48,9 @@ class AemFaqQaTest(unittest.TestCase):
     def test_language_findings_ignores_product_names_and_punctuation(self):
         self.assertEqual(language_findings([{"text": ["Restart Galaxy Watch 7."]}]), [])
 
+    def test_language_findings_allows_english_on_any_page(self):
+        self.assertEqual(language_findings([{"text": ["รีสตาร์ท Galaxy Watch เพื่อดำเนินการต่อ"]}]), [])
+
     def test_audit_findings_ignores_component_count_and_order(self):
         audit = {"components": [{"type": "text", "settings": {}, "text": []}]}
         baseline = {"components": [

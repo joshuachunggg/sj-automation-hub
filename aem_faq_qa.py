@@ -204,7 +204,7 @@ def language_findings(components):
     expected = max(set(scripts), key=scripts.count)
     findings = []
     for text in texts:
-        foreign = [name for name in (script(char) for char in text) if name and name != expected]
+        foreign = [name for name in (script(char) for char in text) if name and name not in (expected, "Latin")]
         if len(foreign) >= 3:
             findings.append(f"possible mixed language: {max(set(foreign), key=foreign.count)} text on a {expected} page")
             break
