@@ -11,7 +11,7 @@ A native terminal hub for AEM FAQ publishing, FAQ QA, and component copying. It 
    ```sh
    python3 -m venv .venv
    .venv/bin/pip install -r requirements.txt
-   .venv/bin/playwright install chromium
+   .venv/bin/playwright install chromium firefox
    npm install
    ```
 
@@ -57,7 +57,7 @@ cd /path/to/sj-automation-hub
    .\.venv\Scripts\Activate.ps1
    python -m pip install --upgrade pip
    python -m pip install -r requirements.txt
-   python -m playwright install chromium
+   python -m playwright install chromium firefox
    npm install
    ```
 
@@ -85,7 +85,7 @@ cd $HOME\Downloads\sj-automation-hub
 
 ## Automations
 
-- **AEM FAQ Publishing:** publish pending country columns through Jira or validate live URLs. Run its Jira login setup when the saved session expires.
+- **AEM FAQ Publishing:** choose Firefox or Chromium for Jira login, publishing, and live checks. Run its Jira login setup when the saved session expires.
 - **AEM Component Copier:** copy missing components between AEM author pages.
 - **AEM FAQ QA:** audit parent FAQs, collect your review decisions, then copy approved content to child locales.
 

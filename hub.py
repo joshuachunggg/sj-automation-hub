@@ -111,26 +111,32 @@ def aem_publishing():
     )
     if not choice:
         return
+    browser = menu("Publishing Browser", [
+        ("Firefox", "firefox", "Use Playwright Firefox for Jira and live checks"),
+        ("Chromium", "chromium", "Use Playwright Chromium for Jira and live checks"),
+    ])
+    if not browser:
+        return
     if choice == "login":
-        return jira_login()
+        return jira_login(browser)
     workbook = ask_path("Publishing workbook", None)
     if not workbook:
         return
     workers = ask("Parallel Jira tabs (1-15)", "10")
     if workers is None:
         return
-    args = [python(), str(ROOT / "main.py"), "--workbook", str(workbook), "--workers", workers]
+    args = [python(), str(ROOT / "main.py"), "--workbook", str(workbook), "--workers", workers, "--browser", browser]
     if choice == "validate":
         args.append("--validate-only")
     run_logged("AEM FAQ Publishing", args)
 
 
-def jira_login():
+def jira_login(browser="chromium"):
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-jira-login-setup.log"
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
-            [python(), str(ROOT / "auth_login.py")],
+            [python(), str(ROOT / "auth_login.py"), "--browser", browser],
             stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1,
         )
         if panel("Jira Login", ["Complete SSO/MFA in the browser, then press Enter to save this hub's local session."], wait=True):
@@ -326,6 +332,46 @@ def python():
     return os.environ.get("PYTHON", sys.executable)
 
 
+def publishing_status(lines):
+    workers, agents, locales = 0, {}, {}
+    for line in lines:
+        parts = line.split("\t", 5)
+        if parts[0] == "PUBLISHING WORKERS" and len(parts) == 2:
+            workers = int(parts[1])
+        elif parts[0] == "PROGRESS" and len(parts) == 6:
+            slot, _, _, site, status = parts[1:]
+            agents[int(slot)] = "idle" if status == "idle" else f"{site}: {status}"
+        elif parts[0] == "LOCALE" and len(parts) == 5:
+            sheet, col, site, status = parts[1:]
+            locales[(sheet, int(col), site)] = status
+    return workers, agents, locales
+
+
+def draw_publishing_status(screen, lines, scroll, key):
+    workers, agents, locales = publishing_status(lines)
+    height, width = screen.getmaxyx()
+    agent_rows = max(workers, len(agents))
+    locale_start = 5 + agent_rows
+    visible = max(1, height - locale_start - 2)
+    max_scroll = max(0, len(locales) - visible)
+    if key in (curses.KEY_UP, ord("k")):
+        scroll = max(0, scroll - 1)
+    elif key in (curses.KEY_DOWN, ord("j")):
+        scroll = min(max_scroll, scroll + 1)
+    elif key == curses.KEY_PPAGE:
+        scroll = max(0, scroll - visible)
+    elif key == curses.KEY_NPAGE:
+        scroll = min(max_scroll, scroll + visible)
+
+    screen.addnstr(3, 4, "Agents", width - 8, curses.A_BOLD | curses.color_pair(3))
+    for slot in range(1, agent_rows + 1):
+        screen.addnstr(4 + slot, 4, f"{slot:>2}. {agents.get(slot, 'idle')}", width - 8, curses.color_pair(3))
+    screen.addnstr(locale_start, 4, f"Locales ({scroll + 1}-{min(len(locales), scroll + visible)} of {len(locales)})", width - 8, curses.A_BOLD | curses.color_pair(3))
+    for row, ((sheet, _, site), status) in enumerate(list(locales.items())[scroll:scroll + visible], locale_start + 1):
+        screen.addnstr(row, 4, f"{sheet}/{site}: {status}", width - 8, curses.color_pair(3))
+    return scroll
+
+
 def run_logged(title, args, cwd=None, review=False, env=None, mfa=False, return_on_success=False):
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-{slug(title)}.log"
@@ -343,11 +389,21 @@ def wait_process(title, process, log_path, review=False, mfa=False, return_on_su
         started = time.time()
         handled_review = ""
         handled_server_setup = False
+        locale_scroll = 0
         while process.poll() is None:
             clear_screen(screen)
             height, width = screen.getmaxyx()
             header(screen, title)
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            key = screen.getch()
+            if title == "AEM FAQ Publishing":
+                locale_scroll = draw_publishing_status(screen, lines, locale_scroll, key)
+                footer(screen, " Up/Down scroll locales  Ctrl+C stop  live log is saved ")
+                screen.refresh()
+                if key == 3:
+                    process.terminate()
+                    return False
+                continue
             progress = next((line for line in reversed(lines) if line.startswith("PROGRESS ")), "Running")
             findings = sum(line.startswith("FINDING ") for line in lines)
             copies = sum(line.startswith("COPY DONE ") for line in lines)
@@ -376,7 +432,7 @@ def wait_process(title, process, log_path, review=False, mfa=False, return_on_su
                     return True
                 process.terminate()
                 return False
-            if screen.getch() == 3:
+            if key == 3:
                 process.terminate()
                 return False
         clear_screen(screen)

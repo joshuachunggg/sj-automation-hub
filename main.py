@@ -21,6 +21,7 @@ def parse_args():
     p.add_argument("--start-sheet", help="resume run starting at this sheet")
     p.add_argument("--start-col", help="resume run starting at this column letter (needs --start-sheet)")
     p.add_argument("--workers", type=int, default=10, help="parallel Jira pages (1-15, default: 10)")
+    p.add_argument("--browser", choices=("chromium", "firefox"), default="chromium", help="browser for Jira and live checks")
     p.add_argument(
         "--validate-only", action="store_true",
         help="skip Jira entirely - just re-check the live URL for pending columns and write back if live",
@@ -35,6 +36,7 @@ class LiveMonitor:
         self.workers = workers
         self.log_file = log_file
         self.slots = ["idle"] * workers
+        self.columns = {}
         self.events = []
         self.screen = None
 
@@ -55,17 +57,41 @@ class LiveMonitor:
 
     def claim(self, col):
         slot = self.slots.index("idle")
+        self.columns[slot] = col
         self.slots[slot] = f"{col.site_code}: starting"
+        self.locale(col, "in progress: starting")
+        self.progress(slot, "starting")
         self.draw()
         return slot
 
     def release(self, slot):
         self.slots[slot] = "idle"
+        self.columns.pop(slot, None)
+        self.progress(slot, "idle")
         self.draw()
 
     def status(self, slot, message):
         self.slots[slot] = message
+        col = self.columns[slot]
+        self.locale(col, f"in progress: {message.removeprefix(f'{col.site_code}: ')}")
+        self.progress(slot, message)
         self.draw()
+
+    def event(self, *parts):
+        self.log_file.write("\t".join(map(str, parts)) + "\n")
+        self.log_file.flush()
+
+    def progress(self, slot, status):
+        col = self.columns.get(slot)
+        self.event("PROGRESS", slot + 1, col.sheet_name if col else "", col.col_idx if col else "", col.site_code if col else "", status)
+
+    def locale(self, col, status):
+        self.event("LOCALE", col.sheet_name, col.col_idx, col.site_code, status)
+
+    def register_columns(self, columns):
+        self.event("PUBLISHING WORKERS", self.workers)
+        for col in columns:
+            self.locale(col, "waiting")
 
     def log(self, message):
         line = f"{datetime.datetime.now().strftime('%H:%M:%S')} {message}"
@@ -118,21 +144,24 @@ def apply_start_from(pending, wb, start_sheet, start_col_letter):
     return [c for c in pending if keep(c)]
 
 
-def run_validate_only(pending, wb, log):
+def run_validate_only(pending, wb, log, monitor, browser_name):
     """No Jira, no login - just re-check the transformed live URL for each pending column."""
     still_not_live = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = getattr(p, browser_name).launch(headless=False)
         context = browser.new_context()
         try:
             for col in pending:
+                monitor.locale(col, "in progress: checking live")
                 live_url = transform_editor_url(col.editor_url)
                 if check_live(context, live_url, timeout=5000):
                     log(f"[{col.sheet_name}] col {col.col_idx} ({col.site_code}): live: {live_url}")
                     write_live_url(wb, FILE_PATH, col.sheet_name, col.col_idx, live_url)
+                    monitor.locale(col, "live")
                 else:
                     log(f"[{col.sheet_name}] col {col.col_idx} ({col.site_code}): not yet live: {live_url}")
                     still_not_live.append((col, live_url))
+                    monitor.locale(col, "not live")
         except KeyboardInterrupt:
             log("\n[INTERRUPTED] Ctrl+C received - stopping. Progress so far is saved in the sheet.")
         browser.close()
@@ -190,10 +219,10 @@ async def _wait_for_live(context, col, semaphore, monitor):
             monitor.release(slot)
 
 
-async def run_publish(pending, wb, log, workers, monitor):
+async def run_publish(pending, wb, log, workers, monitor, browser_name):
     not_found, ambiguous, errored = [], [], []
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=100)
+        browser = await getattr(p, browser_name).launch(headless=False, slow_mo=100)
         context = await browser.new_context(storage_state=SESSION_FILE)
         try:
             probe = await context.new_page()
@@ -210,12 +239,15 @@ async def run_publish(pending, wb, log, workers, monitor):
                 if error:
                     log(f"{prefix}\n  [ERROR] {error}")
                     errored.append((col, error))
+                    monitor.locale(col, "not live: error")
                 elif result == "not_found":
                     log(f"{prefix}\n  not found")
                     not_found.append(col)
+                    monitor.locale(col, "not live: not found")
                 elif result == "ambiguous":
                     log(f"{prefix}\n  ambiguous")
                     ambiguous.append(col)
+                    monitor.locale(col, "not live: ambiguous")
                 else:
                     published.append(col)
 
@@ -224,8 +256,10 @@ async def run_publish(pending, wb, log, workers, monitor):
             for col, live_url, is_live in checks:
                 if is_live:
                     write_live_url(wb, FILE_PATH, col.sheet_name, col.col_idx, live_url)
+                    monitor.locale(col, "live")
                 else:
                     still_not_live.append((col, live_url))
+                    monitor.locale(col, "not live")
         finally:
             await browser.close()
 
@@ -236,6 +270,8 @@ async def run_publish(pending, wb, log, workers, monitor):
     log(f"Errored ({len(errored)}):")
     for c, err in errored:
         log(f"  {c.url_title} ({c.site_code}): {err}")
+    not_confirmed = [*not_found, *ambiguous, *(c for c, _ in still_not_live), *(c for c, _ in errored)]
+    log(f"Not confirmed live ({len(not_confirmed)}): {[f'{c.sheet_name}/{c.site_code}' for c in not_confirmed]}")
 
 
 def main():
@@ -256,11 +292,12 @@ def main():
             pending = [c for c in pending if c.col_idx == col_idx]
         if args.start_sheet:
             pending = apply_start_from(pending, wb, args.start_sheet, args.start_col)
+        monitor.register_columns(pending)
         log(f"{len(pending)} pending column(s) found across {len(wb.sheetnames)} sheet(s)")
         if args.validate_only:
-            run_validate_only(pending, wb, log)
+            run_validate_only(pending, wb, log, monitor, args.browser)
         else:
-            asyncio.run(run_publish(pending, wb, log, args.workers, monitor))
+            asyncio.run(run_publish(pending, wb, log, args.workers, monitor, args.browser))
     finally:
         monitor.stop()
         log_file.close()
