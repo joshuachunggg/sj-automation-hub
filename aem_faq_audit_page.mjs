@@ -30,6 +30,7 @@ async function main() {
     }));
   if (args.get('editor-url')) await page.goto(args.get('editor-url'), { waitUntil: 'domcontentloaded' }).catch(() => {});
   console.log(JSON.stringify({ components }));
+  await browser.close();
 }
 
 async function reviewPage(context) {

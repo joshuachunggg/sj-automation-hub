@@ -101,6 +101,17 @@ class AemFaqQaTest(unittest.TestCase):
         with patch("aem_faq_qa.subprocess.run", return_value=result) as run:
             self.assertEqual(audit_page("https://example.test", "/content/example"), {"components": [{"text": ["အဆင့်"]}]})
         self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
+        self.assertEqual(run.call_args.kwargs["timeout"], 60)
+
+    def test_audit_timeout_does_not_stop_the_pass(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Global"
+        ws.cell(8, 2).value = "sg"
+        ws.cell(13, 2).value = "example"
+        args = SimpleNamespace(apply=False, review=False, copy_workers=1)
+        with patch("aem_faq_qa.audit_page", side_effect=__import__("subprocess").TimeoutExpired(["node"], 60)):
+            run_all(wb, args)
 
 
 if __name__ == "__main__":

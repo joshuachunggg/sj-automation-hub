@@ -107,10 +107,14 @@ def run_all(wb, args):
         try:
             link = editor_url(host_for(ws, ws.title), site, base_path(ws), ws.cell(13, col).value)
             audit = audit_page(host_for(ws, ws.title), article_path(ws, col), link if args.review and not ws.cell(3, col).value else "")
-        except subprocess.CalledProcessError as error:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             findings += 1
-            detail = (error.stderr or error.stdout or str(error)).strip().splitlines()
-            print(f"FINDING {ws.title}/{site}: audit failed: {detail[-1] if detail else error}", flush=True)
+            if isinstance(error, subprocess.TimeoutExpired):
+                detail = f"audit timed out after {error.timeout}s"
+            else:
+                lines = (error.stderr or error.stdout or str(error)).strip().splitlines()
+                detail = lines[-1] if lines else str(error)
+            print(f"FINDING {ws.title}/{site}: audit failed: {detail}", flush=True)
             continue
         baseline = baselines.setdefault(ws.title, audit)
         for finding in audit_findings(audit, baseline):
@@ -172,7 +176,7 @@ def audit_page(host, path, editor_link=""):
         cmd += ["--editor-url", editor_link]
     result = subprocess.run(
         cmd,
-        check=True, capture_output=True, text=True, encoding="utf-8",
+        check=True, capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     return json.loads(result.stdout)
 
