@@ -172,7 +172,7 @@ def audit_page(host, path, editor_link=""):
         cmd += ["--editor-url", editor_link]
     result = subprocess.run(
         cmd,
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     return json.loads(result.stdout)
 

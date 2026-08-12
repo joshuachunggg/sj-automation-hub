@@ -7,7 +7,7 @@ logging.disable(logging.CRITICAL)
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-from aem_faq_qa import audit_findings, column_kind, detail_ids, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
+from aem_faq_qa import audit_findings, audit_page, column_kind, detail_ids, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
 from hub import chrome_command, chrome_ready, pick_file
 
 
@@ -95,6 +95,12 @@ class AemFaqQaTest(unittest.TestCase):
         error = __import__("subprocess").CalledProcessError(1, ["node"], stderr="")
         with patch("aem_faq_qa.audit_page", side_effect=error):
             run_all(wb, args)
+
+    def test_audit_reads_node_output_as_utf8(self):
+        result = SimpleNamespace(stdout='{"components": [{"text": ["အဆင့်"]}]}')
+        with patch("aem_faq_qa.subprocess.run", return_value=result) as run:
+            self.assertEqual(audit_page("https://example.test", "/content/example"), {"components": [{"text": ["အဆင့်"]}]})
+        self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
 
 
 if __name__ == "__main__":
