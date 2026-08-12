@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 import curses
+import json
 import os
 import platform
 import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
 from urllib.request import urlopen
 
+from openpyxl import load_workbook
+
+from aem_faq_qa import base_path, editor_url, host_for
+
 ROOT = Path(__file__).resolve().parent
-CHROME_PROFILE = Path(tempfile.gettempdir()) / "aem-chrome"
+CHROME_PROFILE = ROOT / ".aem-chrome"
 LOG_DIR = ROOT / "logs"
 ENV_FILE = ROOT / ".env"
 
@@ -176,7 +180,7 @@ def aem_faq_qa():
         args.append("--plan")
         return run_logged("AEM FAQ QA Plan", args)
 
-    if not ensure_faq_chrome():
+    if not ensure_faq_chrome(first_faq_editor(workbook)):
         return
     if not confirm("Audit and review every unapproved parent, then copy approved children?", False):
         return
@@ -265,43 +269,46 @@ def confirm(label, default):
 
 
 def ensure_aem_chrome(login_lines):
-    if chrome_ready():
+    if dev_chrome_ready():
         return True
-    chrome = chrome_command()
-    if not chrome:
-        panel("Chrome Not Found", ["Install Google Chrome, or set CHROME to its executable path."], wait=True)
+    if not launch_dev_chrome():
         return False
-    subprocess.Popen([chrome, "--remote-debugging-port=9222", f"--user-data-dir={CHROME_PROFILE}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    activate_dev_chrome()
     return panel("Chrome Login", login_lines, wait=True)
 
 
-def ensure_faq_chrome():
-    if not chrome_ready():
-        chrome = chrome_command()
-        if not chrome:
-            panel("Chrome Not Found", ["Install Google Chrome, or set CHROME to its executable path."], wait=True)
+def ensure_faq_chrome(editor):
+    if not dev_chrome_ready():
+        if not launch_dev_chrome():
             return False
-        subprocess.Popen([chrome, "--remote-debugging-port=9222", f"--user-data-dir={CHROME_PROFILE}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(40):
-            if chrome_ready():
+            if dev_chrome_ready():
                 break
             time.sleep(0.25)
         else:
-            panel("Chrome Did Not Start", ["Close Chrome and try again."], wait=True)
+            panel("Dev Chrome Did Not Start", ["Close a stale Hub Chrome process and try again."], wait=True)
             return False
+    activate_dev_chrome()
     values = load_env()
-    if not all(values.get(name) for name in ("WMC_LOGIN_URL", "WMC_USERNAME", "WMC_PASSWORD")):
-        panel("Samsung WMC Setup", ["Copy .env.example to .env and fill the three WMC values."], wait=True)
+    return run_logged(
+        "Samsung WMC Login",
+        ["node", str(ROOT / "aem_wmc_login.mjs"), "--editor-url", editor],
+        env=values, mfa=True,
+    )
+
+
+def dev_chrome_ready():
+    try:
+        with urlopen("http://127.0.0.1:9222/json/version", timeout=0.2) as response:
+            version = json.load(response)
+            return response.status == 200 and "Chrome" in version.get("Browser", "") and bool(version.get("webSocketDebuggerUrl"))
+    except (OSError, ValueError):
         return False
-    return run_logged("Samsung WMC Login", ["node", str(ROOT / "aem_wmc_login.mjs")], env=values, mfa=True)
 
 
 def chrome_ready():
-    try:
-        with urlopen("http://127.0.0.1:9222/json/version", timeout=0.2) as response:
-            return response.status == 200
-    except OSError:
-        return False
+    """Backward-compatible name for callers that only need the dev-Chrome check."""
+    return dev_chrome_ready()
 
 
 def python():
@@ -509,6 +516,20 @@ def load_env():
     return values
 
 
+def first_faq_editor(workbook):
+    wb = load_workbook(workbook, read_only=True, data_only=True)
+    try:
+        for ws in wb.worksheets:
+            for col in range(2, ws.max_column + 1):
+                site = ws.cell(8, col).value
+                slug = ws.cell(13, col).value
+                if site and slug:
+                    return editor_url(host_for(ws, ws.title), site, base_path(ws), slug)
+    finally:
+        wb.close()
+    raise ValueError("Workbook has no FAQ site and slug columns")
+
+
 def chrome_command():
     configured = os.environ.get("CHROME")
     if configured:
@@ -524,6 +545,35 @@ def chrome_command():
     }.get(system, [])
     candidates.extend(filter(None, (shutil.which(name) for name in ("google-chrome", "chromium", "chromium-browser", "chrome"))))
     return next((candidate for candidate in candidates if Path(candidate).exists()), None)
+
+
+def launch_dev_chrome():
+    chrome = chrome_command()
+    if not chrome:
+        panel("Chrome Not Found", ["Install Google Chrome, or set CHROME to its executable path."], wait=True)
+        return False
+    args = [
+        "--new-window",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--remote-debugging-port=9222",
+        f"--user-data-dir={CHROME_PROFILE}",
+        "about:blank",
+    ]
+    if platform.system() == "Darwin" and chrome.endswith("/Contents/MacOS/Google Chrome"):
+        app = str(Path(chrome).parents[2])
+        subprocess.Popen(["open", "-na", app, "--args", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        subprocess.Popen([chrome, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True
+
+
+def activate_dev_chrome():
+    if platform.system() == "Darwin":
+        subprocess.run(
+            ["osascript", "-e", 'tell application "Google Chrome" to activate'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
 
 
 def setup_screen(screen, cursor=False):
