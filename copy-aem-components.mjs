@@ -9,7 +9,7 @@ const yes = options.has('yes');
 const overwrite = options.has('overwrite');
 let sourceUrl = options.get('source');
 let targetUrl = options.get('target');
-const cdp = process.env.CDP || 'http://127.0.0.1:9222';
+const cdp = process.env.CDP || 'http://127.0.0.1:9223';
 const browserName = options.get('browser') || 'chromium';
 const userDataDir = options.get('user-data-dir') || `/tmp/aem-${browserName}`;
 

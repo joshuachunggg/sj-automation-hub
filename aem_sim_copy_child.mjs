@@ -15,7 +15,7 @@ async function main() {
   const destinationPath = required('destination-path');
   const siteCode = required('site-code');
 
-  const browser = await chromium.connectOverCDP(process.env.CDP || 'http://127.0.0.1:9222');
+  const browser = await chromium.connectOverCDP(process.env.CDP || 'http://127.0.0.1:9223');
   const context = browser.contexts()[0] || await browser.newContext();
   const page = await context.newPage();
   try {

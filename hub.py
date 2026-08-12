@@ -12,14 +12,11 @@ from datetime import datetime
 from pathlib import Path
 from urllib.request import urlopen
 
-from openpyxl import load_workbook
-
-from aem_faq_qa import base_path, editor_url, host_for
-
 ROOT = Path(__file__).resolve().parent
 CHROME_PROFILE = ROOT / ".aem-chrome"
 LOG_DIR = ROOT / "logs"
 ENV_FILE = ROOT / ".env"
+CDP_ENDPOINT = "http://127.0.0.1:9223"
 
 
 def main():
@@ -180,7 +177,7 @@ def aem_faq_qa():
         args.append("--plan")
         return run_logged("AEM FAQ QA Plan", args)
 
-    if not ensure_faq_chrome(first_faq_editor(workbook)):
+    if not ensure_faq_chrome():
         return
     if not confirm("Audit and review every unapproved parent, then copy approved children?", False):
         return
@@ -277,7 +274,7 @@ def ensure_aem_chrome(login_lines):
     return panel("Chrome Login", login_lines, wait=True)
 
 
-def ensure_faq_chrome(editor):
+def ensure_faq_chrome():
     if not dev_chrome_ready():
         if not launch_dev_chrome():
             return False
@@ -292,14 +289,14 @@ def ensure_faq_chrome(editor):
     values = load_env()
     return run_logged(
         "Samsung WMC Login",
-        ["node", str(ROOT / "aem_wmc_login.mjs"), "--editor-url", editor],
+        ["node", str(ROOT / "aem_wmc_login.mjs")],
         env=values, mfa=True,
     )
 
 
 def dev_chrome_ready():
     try:
-        with urlopen("http://127.0.0.1:9222/json/version", timeout=0.2) as response:
+        with urlopen(f"{CDP_ENDPOINT}/json/version", timeout=0.2) as response:
             version = json.load(response)
             return response.status == 200 and "Chrome" in version.get("Browser", "") and bool(version.get("webSocketDebuggerUrl"))
     except (OSError, ValueError):
@@ -321,7 +318,7 @@ def run_logged(title, args, cwd=None, review=False, env=None, mfa=False):
     with log_path.open("w", encoding="utf-8") as log:
         log.write("$ " + " ".join(shlex.quote(str(arg)) for arg in args) + "\n\n")
         log.flush()
-        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, **(env or {}), "PYTHONIOENCODING": "utf-8"})
+        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, **(env or {}), "CDP": CDP_ENDPOINT, "PYTHONIOENCODING": "utf-8"})
         return wait_process(title, process, log_path, review, mfa)
 
 
@@ -516,20 +513,6 @@ def load_env():
     return values
 
 
-def first_faq_editor(workbook):
-    wb = load_workbook(workbook, read_only=True, data_only=True)
-    try:
-        for ws in wb.worksheets:
-            for col in range(2, ws.max_column + 1):
-                site = ws.cell(8, col).value
-                slug = ws.cell(13, col).value
-                if site and slug:
-                    return editor_url(host_for(ws, ws.title), site, base_path(ws), slug)
-    finally:
-        wb.close()
-    raise ValueError("Workbook has no FAQ site and slug columns")
-
-
 def chrome_command():
     configured = os.environ.get("CHROME")
     if configured:
@@ -556,15 +539,11 @@ def launch_dev_chrome():
         "--new-window",
         "--no-first-run",
         "--no-default-browser-check",
-        "--remote-debugging-port=9222",
+        "--remote-debugging-port=9223",
         f"--user-data-dir={CHROME_PROFILE}",
         "about:blank",
     ]
-    if platform.system() == "Darwin" and chrome.endswith("/Contents/MacOS/Google Chrome"):
-        app = str(Path(chrome).parents[2])
-        subprocess.Popen(["open", "-na", app, "--args", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        subprocess.Popen([chrome, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen([chrome, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True
 
 

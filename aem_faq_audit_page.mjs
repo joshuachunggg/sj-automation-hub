@@ -14,7 +14,7 @@ main().catch((error) => {
 async function main() {
   const host = required('host');
   const path = required('path');
-  const browser = await chromium.connectOverCDP(process.env.CDP || 'http://127.0.0.1:9222');
+  const browser = await chromium.connectOverCDP(process.env.CDP || 'http://127.0.0.1:9223');
   const page = await reviewPage(browser.contexts()[0] || await browser.newContext());
   const response = await page.goto(`${host}${path}.infinity.json`, { waitUntil: 'domcontentloaded' });
   if (!response?.ok()) throw new Error(`Could not read ${path}: ${response?.status() || 'no response'}`);

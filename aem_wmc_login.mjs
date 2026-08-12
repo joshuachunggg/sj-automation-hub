@@ -1,17 +1,15 @@
 import { chromium } from 'playwright-core';
 
-const editorUrl = process.argv.at(-1);
-if (!editorUrl?.startsWith("https://")) throw new Error("Missing --editor-url");
-
-const browser = await chromium.connectOverCDP(process.env.CDP || "http://127.0.0.1:9222");
+const browser = await chromium.connectOverCDP(process.env.CDP || "http://127.0.0.1:9223");
 const context = browser.contexts()[0];
 const page = await context.newPage();
+const hosts = [
+  "https://p6spp-ap-author.samsung.com",
+  "https://p6spp-eu-author.samsung.com",
+  "https://p6spp-us-author.samsung.com",
+];
 
-const author = new URL(editorUrl).origin;
-const session = await page.goto(`${author}/libs/cq/security/userinfo.json`, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null);
-const user = await session?.json().catch(() => null);
-if (session?.ok() && user?.userID && user.userID !== "anonymous") {
-  await page.goto(editorUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+if (await Promise.all(hosts.map(host => signedIn(context, host))).then(results => results.every(Boolean))) {
   console.log("AEM SESSION READY");
   process.exit(0);
 }
@@ -33,19 +31,28 @@ if (!await page.getByText(/^Hi,/).first().isVisible().catch(() => false)) {
   await page.goto("https://wds.samsung.com/wds/sso/login/ssoLoginSuccess.do", { waitUntil: "domcontentloaded", timeout: 15000 });
 }
 
-for (const host of [
-  "https://p6spp-ap-author.samsung.com",
-  "https://p6spp-eu-author.samsung.com",
-  "https://p6spp-us-author.samsung.com",
-]) {
+for (const host of hosts) {
   const support = await context.newPage();
   try {
-    const response = await support.goto(`${host}/aemapi/user/login_sso`, { waitUntil: "domcontentloaded", timeout: 15000 });
+    const response = await support.goto(`${host}/aemapi/user/login_sso`, { waitUntil: "load", timeout: 30000 });
     if (!response?.ok()) throw new Error(`Support activation failed for ${host}`);
+    await support.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
   } finally {
     await support.close();
   }
 }
 
-await page.goto(editorUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
 console.log("AEM SESSION READY");
+
+async function signedIn(context, host) {
+  const probe = await context.newPage();
+  try {
+    const response = await probe.goto(`${host}/libs/cq/security/userinfo.json`, { waitUntil: "domcontentloaded", timeout: 15000 });
+    const user = await response?.json().catch(() => null);
+    return response?.ok() && user?.userID && user.userID !== "anonymous";
+  } catch {
+    return false;
+  } finally {
+    await probe.close();
+  }
+}
