@@ -233,10 +233,10 @@ def python():
 def run_logged(title, args, cwd=None, review=False):
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-{slug(title)}.log"
-    with log_path.open("w") as log:
+    with log_path.open("w", encoding="utf-8") as log:
         log.write("$ " + " ".join(shlex.quote(str(arg)) for arg in args) + "\n\n")
         log.flush()
-        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         wait_process(title, process, log_path, review)
 
 
@@ -250,7 +250,7 @@ def wait_process(title, process, log_path, review=False):
             screen.erase()
             height, width = screen.getmaxyx()
             header(screen, title)
-            lines = log_path.read_text(errors="replace").splitlines()
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
             progress = next((line for line in reversed(lines) if line.startswith("PROGRESS ")), "Running")
             findings = sum(line.startswith("FINDING ") for line in lines)
             copies = sum(line.startswith("COPY DONE ") for line in lines)
@@ -345,7 +345,7 @@ def review_note(screen):
 
 
 def view_log(path):
-    text = path.read_text(errors="replace").splitlines()
+    text = path.read_text(encoding="utf-8", errors="replace").splitlines()
     def draw(screen):
         setup_screen(screen)
         offset = max(0, len(text) - 1)

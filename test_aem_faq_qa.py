@@ -7,7 +7,7 @@ logging.disable(logging.CRITICAL)
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-from aem_faq_qa import audit_findings, audit_page, column_kind, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
+from aem_faq_qa import audit_findings, audit_page, column_kind, configure_output, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
 from hub import chrome_command, chrome_ready, pick_file
 
 
@@ -58,6 +58,11 @@ class AemFaqQaTest(unittest.TestCase):
     def test_language_findings_flags_bengali_on_thai_page(self):
         findings = language_findings([{"text": ["รีสตาร์ทนาฬิกาแล้วตรวจสอบว่าทำงานได้ตามปกติ। ঘড়িটি পুনরায় চালু করুন।"]}])
         self.assertEqual(findings, ["possible mixed language: Bengali text on a Thai page"])
+
+    def test_cli_output_uses_utf8(self):
+        with patch("aem_faq_qa.sys.stdout") as stdout:
+            configure_output()
+        stdout.reconfigure.assert_called_once_with(encoding="utf-8", errors="backslashreplace")
 
     def test_audit_findings_ignores_component_count_and_order(self):
         audit = {"components": [{"type": "text", "settings": {}, "text": []}]}

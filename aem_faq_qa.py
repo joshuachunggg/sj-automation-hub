@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import subprocess
+import sys
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -24,6 +25,7 @@ SHEET_HOSTS = {
 
 
 def main():
+    configure_output()
     args = parse_args()
     wb = load_workbook(args.workbook)
     if args.plan:
@@ -81,6 +83,11 @@ def parse_args():
     if not args.plan and not args.all and not all([args.sheet, args.child_site]):
         parser.error("--sheet and --child-site are required unless --plan is used")
     return args
+
+
+def configure_output():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def run_all(wb, args):
