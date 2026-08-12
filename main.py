@@ -199,7 +199,7 @@ async def _publish_one(context, col, semaphore, monitor):
             monitor.release(slot)
 
 
-async def _wait_for_live(context, col, semaphore, monitor):
+async def _wait_for_live(context, col, semaphore, monitor, wb):
     live_url = transform_editor_url(col.editor_url)
     async with semaphore:
         slot = monitor.claim(col)
@@ -207,6 +207,7 @@ async def _wait_for_live(context, col, semaphore, monitor):
             for attempt in range(4):
                 monitor.status(slot, f"{col.site_code}: checking live ({attempt + 1}/4)")
                 if await check_live_async(context, live_url):
+                    write_live_url(wb, FILE_PATH, col.sheet_name, col.col_idx, live_url)
                     monitor.status(slot, f"{col.site_code}: live")
                     monitor.log(f"[{col.sheet_name}] col {col.col_idx} ({col.site_code}): verified live: {live_url}")
                     return col, live_url, True
@@ -251,11 +252,10 @@ async def run_publish(pending, wb, log, workers, monitor, browser_name):
                 else:
                     published.append(col)
 
-            checks = await asyncio.gather(*(_wait_for_live(context, col, semaphore, monitor) for col in published))
+            checks = await asyncio.gather(*(_wait_for_live(context, col, semaphore, monitor, wb) for col in published))
             still_not_live = []
             for col, live_url, is_live in checks:
                 if is_live:
-                    write_live_url(wb, FILE_PATH, col.sheet_name, col.col_idx, live_url)
                     monitor.locale(col, "live")
                 else:
                     still_not_live.append((col, live_url))
