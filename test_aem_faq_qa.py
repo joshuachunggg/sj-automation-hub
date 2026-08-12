@@ -1,14 +1,14 @@
 import logging
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 logging.disable(logging.CRITICAL)
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
 from aem_faq_qa import audit_findings, audit_page, column_kind, configure_output, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
-from hub import chrome_command, chrome_ready, pick_file
+from hub import chrome_command, chrome_ready, clear_screen, pick_file, screen_text
 
 
 class AemFaqQaTest(unittest.TestCase):
@@ -107,6 +107,13 @@ class AemFaqQaTest(unittest.TestCase):
             "hub.os.environ", {"LOCALAPPDATA": "C:/Users/test/AppData/Local"}, clear=True
         ), patch("hub.Path.exists", return_value=True):
             self.assertEqual(chrome_command(), "C:/Users/test/AppData/Local/Google/Chrome/Application/chrome.exe")
+
+    def test_windows_tui_clears_and_escapes_wide_text(self):
+        screen = Mock()
+        with patch("hub.platform.system", return_value="Windows"):
+            clear_screen(screen)
+            self.assertEqual(screen_text("日本語"), r"\u65e5\u672c\u8a9e")
+        screen.clear.assert_called_once()
 
     def test_audit_failure_without_stderr_does_not_stop_the_pass(self):
         wb = Workbook()

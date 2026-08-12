@@ -41,13 +41,13 @@ def menu(title, items, back=True):
         setup_screen(screen)
         selected = 0
         while True:
-            screen.erase()
+            clear_screen(screen)
             height, width = screen.getmaxyx()
             header(screen, title)
             for index, (label, _) in enumerate(items):
                 attr = curses.color_pair(2) | curses.A_BOLD if index == selected else curses.color_pair(3)
-                screen.addnstr(5 + index, 4, f"{'›' if index == selected else ' '} {label}", width - 8, attr)
-            shortcuts = " ↑/↓ move  Enter select  q quit " if not back else " ↑/↓ move  Enter select  b/Esc back "
+                screen.addnstr(5 + index, 4, f"{'>' if index == selected else ' '} {label}", width - 8, attr)
+            shortcuts = " Up/Down move  Enter select  q quit " if not back else " Up/Down move  Enter select  b/Esc back "
             footer(screen, shortcuts)
             key = screen.getch()
             if key == ord("q") or (back and key in (ord("b"), 27)):
@@ -143,11 +143,11 @@ def panel(title, lines, wait=False):
     def draw(screen):
         setup_screen(screen)
         while True:
-            screen.erase()
+            clear_screen(screen)
             height, width = screen.getmaxyx()
             header(screen, title)
             for row, line in enumerate(lines, 3):
-                screen.addnstr(row, 4, line, width - 8)
+                screen.addnstr(row, 4, screen_text(line), width - 8)
             label = " Enter continue  b/Esc back " if wait else " b/Esc back "
             footer(screen, label)
             if not wait:
@@ -167,10 +167,10 @@ def ask(label, default=None):
         setup_screen(screen, cursor=True)
         value = default or ""
         while True:
-            screen.erase()
+            clear_screen(screen)
             height, width = screen.getmaxyx()
             header(screen, label)
-            screen.addnstr(4, 4, value, width - 8)
+            screen.addnstr(4, 4, screen_text(value), width - 8)
             footer(screen, " Enter accept  Esc back  Backspace delete ")
             key = screen.getch()
             if key in (10, 13):
@@ -247,21 +247,21 @@ def wait_process(title, process, log_path, review=False):
         started = time.time()
         handled_review = ""
         while process.poll() is None:
-            screen.erase()
+            clear_screen(screen)
             height, width = screen.getmaxyx()
             header(screen, title)
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
             progress = next((line for line in reversed(lines) if line.startswith("PROGRESS ")), "Running")
             findings = sum(line.startswith("FINDING ") for line in lines)
             copies = sum(line.startswith("COPY DONE ") for line in lines)
-            screen.addnstr(3, 4, progress, width - 8, curses.color_pair(2) | curses.A_BOLD)
+            screen.addnstr(3, 4, screen_text(progress), width - 8, curses.color_pair(2) | curses.A_BOLD)
             screen.addnstr(4, 4, f"Elapsed {int(time.time() - started)}s", width // 3 - 6, curses.color_pair(3))
             screen.addnstr(4, width // 3, f"Findings {findings}", width // 3 - 4, curses.color_pair(4))
             screen.addnstr(4, 2 * width // 3, f"Copies {copies}", width // 3 - 4, curses.color_pair(5))
             screen.addnstr(6, 4, "Recent activity", width - 8, curses.A_BOLD | curses.color_pair(3))
             rows = max(1, height - 10)
             for row, line in enumerate(lines[-rows:], 7):
-                screen.addnstr(row, 4, line, width - 8, curses.color_pair(3))
+                screen.addnstr(row, 4, screen_text(line), width - 8, curses.color_pair(3))
             footer(screen, " Ctrl+C stop  live log is saved ")
             screen.refresh()
             if review:
@@ -275,12 +275,12 @@ def wait_process(title, process, log_path, review=False):
             if screen.getch() == 3:
                 process.terminate()
                 return
-        screen.erase()
+        clear_screen(screen)
         status = "completed" if process.returncode == 0 else f"exited with code {process.returncode}"
         height, width = screen.getmaxyx()
         header(screen, title)
         screen.addnstr(3, 4, f"Automation {status}.", width - 8)
-        screen.addnstr(5, 4, f"Log: {log_path}", width - 8)
+        screen.addnstr(5, 4, screen_text(f"Log: {log_path}"), width - 8)
         footer(screen, " Enter return to hub  l view log ")
         while True:
             key = screen.getch()
@@ -299,15 +299,15 @@ def review_prompt(screen, process, lines, review_line):
     screen.timeout(-1)
     _, _, target, link = review_line.split(" ", 3)
     while True:
-        screen.erase()
+        clear_screen(screen)
         height, width = screen.getmaxyx()
         header(screen, f"Review {target}")
-        screen.addnstr(3, 4, link, width - 8)
+        screen.addnstr(3, 4, screen_text(link), width - 8)
         findings = [line for line in lines if line.startswith(f"FINDING {target}:")]
         screen.addnstr(5, 4, "Found:", width - 8, curses.A_BOLD)
         shown = findings or ["No heuristic differentials found."]
         for row, finding in enumerate(shown[-max(1, height - 9):], 6):
-            screen.addnstr(row, 4, finding, width - 8)
+            screen.addnstr(row, 4, screen_text(finding), width - 8)
         footer(screen, " y approve and write row 3   n skip (then optional note) ")
         key = screen.getch()
         if key == ord("y"):
@@ -328,10 +328,10 @@ def review_prompt(screen, process, lines, review_line):
 def review_note(screen):
     value = ""
     while True:
-        screen.erase()
+        clear_screen(screen)
         height, width = screen.getmaxyx()
         header(screen, "Optional review note")
-        screen.addnstr(4, 4, value, width - 8)
+        screen.addnstr(4, 4, screen_text(value), width - 8)
         footer(screen, " Enter save note  Esc no note ")
         key = screen.getch()
         if key in (10, 13):
@@ -350,14 +350,14 @@ def view_log(path):
         setup_screen(screen)
         offset = max(0, len(text) - 1)
         while True:
-            screen.erase()
+            clear_screen(screen)
             height, width = screen.getmaxyx()
             header(screen, path.name)
             rows = height - 4
             start = max(0, min(offset, len(text) - rows))
             for row, line in enumerate(text[start:start + rows], 3):
-                screen.addnstr(row, 0, line, width - 1)
-            footer(screen, " ↑/↓ scroll  b/Esc back  q quit ")
+                screen.addnstr(row, 0, screen_text(line), width - 1)
+            footer(screen, " Up/Down scroll  b/Esc back  q quit ")
             key = screen.getch()
             if key in (ord("b"), ord("q"), 27):
                 return
@@ -420,6 +420,15 @@ def setup_screen(screen, cursor=False):
         curses.init_pair(3, curses.COLOR_WHITE, -1)
         curses.init_pair(4, curses.COLOR_YELLOW, -1)
         curses.init_pair(5, curses.COLOR_GREEN, -1)
+
+
+def clear_screen(screen):
+    (screen.clear if platform.system() == "Windows" else screen.erase)()
+
+
+def screen_text(value):
+    text = str(value)
+    return text.encode("ascii", "backslashreplace").decode() if platform.system() == "Windows" else text
 
 
 def header(screen, title):
