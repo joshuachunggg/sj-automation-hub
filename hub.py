@@ -355,7 +355,7 @@ def wait_process(title, process, log_path, review=False, mfa=False):
                         process.terminate()
                         return False
                     continue
-            if mfa and not handled_mfa and "MFA READY" in lines:
+            if mfa and not handled_mfa and any(line in ("MFA READY", "MFA CHECK") for line in lines):
                 handled_mfa = True
                 mfa_prompt(screen, process)
                 continue
@@ -389,9 +389,9 @@ def mfa_prompt(screen, process):
         clear_screen(screen)
         height, width = screen.getmaxyx()
         header(screen, "Samsung phone approval")
-        screen.addnstr(5, 4, "Approve the Samsung 2FA request on your phone.", width - 8, curses.color_pair(3))
-        screen.addnstr(7, 4, "Only continue after the approval succeeds.", width - 8, curses.color_pair(6))
-        footer(screen, " Enter continue after approval  Esc cancel ")
+        screen.addnstr(5, 4, "If Samsung asks for phone approval, approve it now.", width - 8, curses.color_pair(3))
+        screen.addnstr(7, 4, "Then press Enter. No prompt? Enter continues with the current WMC session.", width - 8, curses.color_pair(6))
+        footer(screen, " Enter continue  Esc cancel ")
         key = screen.getch()
         if key in (10, 13):
             process.stdin.write("\n")

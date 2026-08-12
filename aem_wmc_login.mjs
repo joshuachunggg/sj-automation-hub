@@ -19,17 +19,15 @@ for (const name of ["WMC_LOGIN_URL", "WMC_USERNAME", "WMC_PASSWORD"]) {
   if (!process.env[name]) throw new Error(`No AEM session and missing ${name} in .env`);
 }
 await page.goto(process.env.WMC_LOGIN_URL, { waitUntil: "domcontentloaded" });
-if (!await page.getByText(/^Hi,/).first().isVisible().catch(() => false)) {
-  const loginLink = page.getByRole("row", { name: /To login/i }).getByRole("link");
-  if (await loginLink.isVisible().catch(() => false)) await loginLink.click();
-  await page.locator("#loginButton").click();
+const wmcSession = await waitForWmcState(page);
+if (!wmcSession) {
   await page.getByRole("textbox", { name: "Login ID (e-mail)" }).fill(process.env.WMC_USERNAME);
   await page.getByRole("textbox", { name: "Password" }).fill(process.env.WMC_PASSWORD);
   await page.getByRole("button", { name: "Sign In", exact: true }).click();
-  console.log("MFA READY");
-  await new Promise(resolve => process.stdin.once("data", resolve));
-  await page.goto("https://wds.samsung.com/wds/sso/login/ssoLoginSuccess.do", { waitUntil: "domcontentloaded", timeout: 15000 });
 }
+console.log(wmcSession ? "MFA CHECK" : "MFA READY");
+await new Promise(resolve => process.stdin.once("data", resolve));
+await page.goto("https://wds.samsung.com/wds/sso/login/ssoLoginSuccess.do", { waitUntil: "domcontentloaded", timeout: 15000 });
 
 for (const host of hosts) {
   const support = await context.newPage();
@@ -55,4 +53,25 @@ async function signedIn(context, host) {
   } finally {
     await probe.close();
   }
+}
+
+async function waitForWmcState(page) {
+  const home = page.getByText(/^Hi,/).first();
+  const email = page.getByRole("textbox", { name: "Login ID (e-mail)" });
+  const loginLink = page.getByRole("row", { name: /To login/i }).getByRole("link");
+  const loginButton = page.locator("#loginButton");
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    if (await home.isVisible().catch(() => false)) return true;
+    if (await email.isVisible().catch(() => false)) return false;
+    if (await loginLink.isVisible().catch(() => false)) {
+      await loginLink.click();
+      continue;
+    }
+    if (await loginButton.isVisible().catch(() => false)) {
+      await loginButton.click();
+      continue;
+    }
+    await page.waitForTimeout(250);
+  }
+  throw new Error("WMC did not show a signed-in homepage or login form");
 }
