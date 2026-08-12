@@ -5,9 +5,8 @@ import datetime
 import sys
 from openpyxl.utils import column_index_from_string
 from playwright.async_api import async_playwright
-from playwright.sync_api import sync_playwright
 from config import JIRA_BASE_URL, SESSION_FILE
-from sheet_io import load_workbook, find_pending_columns, write_live_url
+from sheet_io import load_workbook, find_columns, find_pending_columns, write_live_url
 from session_guard import dismiss_jira_notice, ensure_logged_in
 from live_check import transform_editor_url, check_live, check_live_async
 from jira_workflow import process_column
@@ -26,6 +25,7 @@ def parse_args():
         "--validate-only", action="store_true",
         help="skip Jira entirely - just re-check the live URL for pending columns and write back if live",
     )
+    p.add_argument("--validate-all", action="store_true", help="skip Jira and check every locale URL, including columns already marked live")
     return p.parse_args()
 
 
@@ -119,25 +119,35 @@ def apply_start_from(pending, wb, start_sheet, start_col_letter):
     return [c for c in pending if keep(c)]
 
 
-def run_validate_only(pending, wb, log, monitor, browser_name):
-    """No Jira, no login - just re-check the transformed live URL for each pending column."""
-    still_not_live = []
-    with sync_playwright() as p:
-        browser = getattr(p, browser_name).launch(headless=False)
-        context = browser.new_context()
+async def _validate_one(context, col, semaphore, monitor, wb, log):
+    live_url = transform_editor_url(col.editor_url)
+    async with semaphore:
+        slot = monitor.claim(col)
         try:
-            for col in pending:
-                live_url = transform_editor_url(col.editor_url)
-                if check_live(context, live_url, timeout=5000):
-                    log(f"[{col.sheet_name}] col {col.col_idx} ({col.site_code}): live: {live_url}")
-                    write_live_url(wb, FILE_PATH, col.sheet_name, col.col_idx, live_url)
-                else:
-                    log(f"[{col.sheet_name}] col {col.col_idx} ({col.site_code}): not yet live: {live_url}")
-                    still_not_live.append((col, live_url))
-        except KeyboardInterrupt:
-            log("\n[INTERRUPTED] Ctrl+C received - stopping. Progress so far is saved in the sheet.")
-        browser.close()
+            monitor.status(slot, f"{col.site_code}: checking live")
+            if await check_live_async(context, live_url, timeout=5000):
+                write_live_url(wb, FILE_PATH, col.sheet_name, col.col_idx, live_url)
+                monitor.status(slot, f"{col.site_code}: live")
+                log(f"[{col.sheet_name}] col {col.col_idx} ({col.site_code}): live: {live_url}")
+                return None
+            monitor.status(slot, f"{col.site_code}: not live")
+            log(f"[{col.sheet_name}] col {col.col_idx} ({col.site_code}): not yet live: {live_url}")
+            return col, live_url
+        finally:
+            monitor.release(slot)
 
+
+async def run_validate_only(pending, wb, log, workers, monitor, browser_name):
+    """No Jira or login: concurrently check locale URLs and save every confirmed result."""
+    async with async_playwright() as p:
+        browser = await getattr(p, browser_name).launch(headless=True)
+        try:
+            context = await browser.new_context()
+            semaphore = asyncio.Semaphore(workers)
+            results = await asyncio.gather(*(_validate_one(context, col, semaphore, monitor, wb, log) for col in pending))
+        finally:
+            await browser.close()
+    still_not_live = [result for result in results if result]
     log("\n--- Validation Report ---")
     log(f"Still not live ({len(still_not_live)}): {[c.url_title for c, _ in still_not_live]}")
 
@@ -250,7 +260,7 @@ def main():
     log = monitor.log
     try:
         wb = load_workbook(FILE_PATH)
-        pending = find_pending_columns(wb)
+        pending = find_columns(wb, pending_only=not args.validate_all)
         if args.sheet:
             pending = [c for c in pending if c.sheet_name == args.sheet]
         if args.col:
@@ -259,8 +269,8 @@ def main():
         if args.start_sheet:
             pending = apply_start_from(pending, wb, args.start_sheet, args.start_col)
         log(f"{len(pending)} pending column(s) found across {len(wb.sheetnames)} sheet(s)")
-        if args.validate_only:
-            run_validate_only(pending, wb, log, monitor, args.browser)
+        if args.validate_only or args.validate_all:
+            asyncio.run(run_validate_only(pending, wb, log, args.workers, monitor, args.browser))
         else:
             asyncio.run(run_publish(pending, wb, log, args.workers, monitor, args.browser))
     finally:

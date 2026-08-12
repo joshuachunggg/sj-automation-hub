@@ -20,25 +20,28 @@ def load_workbook(path):
     return openpyxl.load_workbook(path)
 
 
-def find_pending_columns(wb):
-    """All sheets, all columns (B onward, A = row labels) where row 2 (AEM Live) is empty."""
-    pending = []
+def find_columns(wb, pending_only=True):
+    """All real translation columns, optionally only those without an AEM Live URL."""
+    columns = []
     for sheet in wb.worksheets:
         for col in range(2, sheet.max_column + 1):
             live_cell = sheet.cell(row=ROW_AEM_LIVE, column=col)
-            if live_cell.value not in (None, ""):
+            if pending_only and live_cell.value not in (None, ""):
                 continue
             site_code = sheet.cell(row=ROW_SITE_CODE, column=col).value
             url_title = sheet.cell(row=ROW_URL_TITLE, column=col).value
             editor_url = sheet.cell(row=ROW_EDITOR_URL, column=col).value
             if not site_code or not url_title:
                 continue  # empty column, not a real translation
-            pending.append(TranslationColumn(sheet.title, col, site_code, url_title, editor_url))
-    return pending
+            columns.append(TranslationColumn(sheet.title, col, site_code, url_title, editor_url))
+    return columns
+
+
+def find_pending_columns(wb):
+    return find_columns(wb)
 
 
 def write_live_url(wb, path, sheet_name, col_idx, url):
     sheet = wb[sheet_name]
     sheet.cell(row=ROW_AEM_LIVE, column=col_idx, value=url)
     wb.save(path)  # save immediately, so progress survives a mid-run stop
-

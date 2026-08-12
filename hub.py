@@ -106,6 +106,7 @@ def aem_publishing():
         [
             ("Publish pending country columns", "publish"),
             ("Validate already-published live URLs", "validate"),
+            ("Validate all locale URLs", "validate-all", "Check and write every locale URL without Jira"),
             ("Jira login setup", "login"),
         ],
     )
@@ -126,8 +127,8 @@ def aem_publishing():
     if workers is None:
         return
     args = [python(), str(ROOT / "main.py"), "--workbook", str(workbook), "--workers", workers, "--browser", browser]
-    if choice == "validate":
-        args.append("--validate-only")
+    if choice in ("validate", "validate-all"):
+        args.append("--validate-all" if choice == "validate-all" else "--validate-only")
     run_logged("AEM FAQ Publishing", args)
 
 
@@ -349,25 +350,28 @@ def wait_process(title, process, log_path, review=False, mfa=False, return_on_su
         started = time.time()
         handled_review = ""
         handled_server_setup = False
+        previous_lines = None
         while process.poll() is None:
-            clear_screen(screen)
             height, width = screen.getmaxyx()
-            header(screen, title)
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            key = screen.getch()
-            progress = next((line for line in reversed(lines) if line.startswith("PROGRESS ")), "Running")
-            findings = sum(line.startswith("FINDING ") for line in lines)
-            copies = sum(line.startswith("COPY DONE ") for line in lines)
-            screen.addnstr(3, 4, screen_text(progress), width - 8, curses.color_pair(2) | curses.A_BOLD)
+            if lines != previous_lines:
+                clear_screen(screen)
+                header(screen, title)
+                progress = next((line for line in reversed(lines) if line.startswith("PROGRESS ")), "Running")
+                findings = sum(line.startswith("FINDING ") for line in lines)
+                copies = sum(line.startswith("COPY DONE ") for line in lines)
+                screen.addnstr(3, 4, screen_text(progress), width - 8, curses.color_pair(2) | curses.A_BOLD)
+                screen.addnstr(4, width // 3, f"Findings {findings}", width // 3 - 4, curses.color_pair(4))
+                screen.addnstr(4, 2 * width // 3, f"Copies {copies}", width // 3 - 4, curses.color_pair(5))
+                screen.addnstr(6, 4, "Recent activity", width - 8, curses.A_BOLD | curses.color_pair(3))
+                rows = max(1, height - 10)
+                for row, line in enumerate(lines[-rows:], 7):
+                    screen.addnstr(row, 4, screen_text(line), width - 8, curses.color_pair(3))
+                footer(screen, " Ctrl+C stop  live log is saved ")
+                previous_lines = lines
             screen.addnstr(4, 4, f"Elapsed {int(time.time() - started)}s", width // 3 - 6, curses.color_pair(3))
-            screen.addnstr(4, width // 3, f"Findings {findings}", width // 3 - 4, curses.color_pair(4))
-            screen.addnstr(4, 2 * width // 3, f"Copies {copies}", width // 3 - 4, curses.color_pair(5))
-            screen.addnstr(6, 4, "Recent activity", width - 8, curses.A_BOLD | curses.color_pair(3))
-            rows = max(1, height - 10)
-            for row, line in enumerate(lines[-rows:], 7):
-                screen.addnstr(row, 4, screen_text(line), width - 8, curses.color_pair(3))
-            footer(screen, " Ctrl+C stop  live log is saved ")
             screen.refresh()
+            key = screen.getch()
             if review:
                 pending = next((line for line in reversed(lines) if line.startswith("REVIEW ITEM ")), "")
                 if pending and pending != handled_review:
