@@ -55,6 +55,10 @@ class AemFaqQaTest(unittest.TestCase):
         findings = language_findings([{"text": ["請重新啟動手錶，然後檢查裝置是否可以正常運作。시계를 다시 시작하세요."]}])
         self.assertEqual(findings, ["possible mixed language: Korean text on a Chinese page"])
 
+    def test_language_findings_flags_bengali_on_thai_page(self):
+        findings = language_findings([{"text": ["รีสตาร์ทนาฬิกาแล้วตรวจสอบว่าทำงานได้ตามปกติ। ঘড়িটি পুনরায় চালু করুন।"]}])
+        self.assertEqual(findings, ["possible mixed language: Bengali text on a Thai page"])
+
     def test_audit_findings_ignores_component_count_and_order(self):
         audit = {"components": [{"type": "text", "settings": {}, "text": []}]}
         baseline = {"components": [

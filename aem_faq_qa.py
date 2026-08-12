@@ -221,7 +221,15 @@ def script(char):
         return "Japanese"
     if "CJK" in name:
         return "Chinese"
-    for marker, label in (("ARABIC", "Arabic"), ("CYRILLIC", "Cyrillic"), ("HEBREW", "Hebrew"), ("MYANMAR", "Burmese"), ("THAI", "Thai"), ("DEVANAGARI", "Devanagari")):
+    for marker, label in (
+        ("ARABIC", "Arabic"), ("ARMENIAN", "Armenian"), ("BENGALI", "Bengali"),
+        ("CYRILLIC", "Cyrillic"), ("DEVANAGARI", "Devanagari"), ("ETHIOPIC", "Ethiopic"),
+        ("GEORGIAN", "Georgian"), ("GREEK", "Greek"), ("GUJARATI", "Gujarati"),
+        ("GURMUKHI", "Gurmukhi"), ("HEBREW", "Hebrew"), ("KANNADA", "Kannada"),
+        ("KHMER", "Khmer"), ("LAO", "Lao"), ("MALAYALAM", "Malayalam"),
+        ("MYANMAR", "Burmese"), ("SINHALA", "Sinhala"), ("TAMIL", "Tamil"),
+        ("TELUGU", "Telugu"), ("THAI", "Thai"), ("TIBETAN", "Tibetan"),
+    ):
         if marker in name:
             return label
     return ""
