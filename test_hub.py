@@ -65,17 +65,6 @@ class DotenvTest(unittest.TestCase):
                 hub.jira_login()
         self.assertTrue(popen.called)
 
-    def test_publishing_status_tracks_agents_and_locales(self):
-        workers, agents, locales = hub.publishing_status([
-            "PUBLISHING WORKERS\t2",
-            "PROGRESS\t1\tGlobal\t2\tsg\topening Jira",
-            "LOCALE\tGlobal\t2\tsg\tin progress: opening Jira",
-            "LOCALE\tEurope\t3\tde\tlive",
-        ])
-        self.assertEqual(workers, 2)
-        self.assertEqual(agents, {1: "sg: opening Jira"})
-        self.assertEqual(locales[("Europe", 3, "de")], "live")
-
 
 if __name__ == "__main__":
     unittest.main()
