@@ -4,4 +4,6 @@ run_log_*.txt
 logs/
 node_modules/
 .venv/
+.env
 *.session.json
+session.json

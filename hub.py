@@ -15,6 +15,7 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parent
 CHROME_PROFILE = Path(tempfile.gettempdir()) / "aem-chrome"
 LOG_DIR = ROOT / "logs"
+ENV_FILE = ROOT / ".env"
 
 
 def main():
@@ -24,10 +25,11 @@ def main():
         choice = menu(
             "SJ Design Automation Hub",
             [
-                ("AEM Component Copier", component_copier),
-                ("AEM FAQ QA", aem_faq_qa),
-                ("Logs", logs),
-                ("Quit", None),
+                ("AEM FAQ Publishing", aem_publishing, "Publish pending FAQ translations through Jira"),
+                ("AEM Component Copier", component_copier, "Copy missing author-page components"),
+                ("AEM FAQ QA", aem_faq_qa, "Audit and copy FAQ content across locales"),
+                ("Logs", logs, "Open a saved run log"),
+                ("Quit", None, "Close the hub"),
             ],
             back=False,
         )
@@ -44,9 +46,14 @@ def menu(title, items, back=True):
             clear_screen(screen)
             height, width = screen.getmaxyx()
             header(screen, title)
-            for index, (label, _) in enumerate(items):
+            for index, item in enumerate(items):
+                label, _, description = (*item, "")[:3]
                 attr = curses.color_pair(2) | curses.A_BOLD if index == selected else curses.color_pair(3)
-                screen.addnstr(5 + index, 4, f"{'>' if index == selected else ' '} {label}", width - 8, attr)
+                row = 5 + index * (2 if description else 1)
+                marker = ">" if index == selected else " "
+                screen.addnstr(row, 4, f"{marker} {label}", width - 8, attr)
+                if description:
+                    screen.addnstr(row + 1, 7, screen_text(description), width - 11, curses.color_pair(6))
             shortcuts = " Up/Down move  Enter select  q quit " if not back else " Up/Down move  Enter select  b/Esc back "
             footer(screen, shortcuts)
             key = screen.getch()
@@ -91,6 +98,56 @@ def component_copier():
     run_logged("AEM Component Copier", args)
 
 
+def aem_publishing():
+    choice = menu(
+        "AEM FAQ Publishing",
+        [
+            ("Publish pending country columns", "publish"),
+            ("Validate already-published live URLs", "validate"),
+            ("Jira login setup", "login"),
+        ],
+    )
+    if not choice:
+        return
+    if choice == "login":
+        return jira_login()
+    workbook = ask_path("Publishing workbook", None)
+    if not workbook:
+        return
+    workers = ask("Parallel Jira tabs (1-15)", "10")
+    if workers is None:
+        return
+    args = [python(), str(ROOT / "main.py"), "--workbook", str(workbook), "--workers", workers]
+    if choice == "validate":
+        args.append("--validate-only")
+    run_logged("AEM FAQ Publishing", args)
+
+
+def jira_login():
+    if not panel(
+        "Jira Login Setup",
+        [
+            "A browser will open for manual Jira SSO/MFA.",
+            "Finish logging in there, then press Enter here to save this hub's local session.",
+        ],
+        wait=True,
+    ):
+        return
+    LOG_DIR.mkdir(exist_ok=True)
+    log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-jira-login-setup.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        process = subprocess.Popen(
+            [python(), str(ROOT / "auth_login.py")],
+            stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        )
+        if panel("Jira Login", ["Complete SSO/MFA in the browser, then press Enter."], wait=True):
+            process.stdin.write("\n")
+            process.stdin.flush()
+            wait_process("Jira Login Setup", process, log_path)
+        else:
+            process.terminate()
+
+
 def aem_faq_qa():
     if not panel(
         "AEM FAQ QA",
@@ -119,7 +176,7 @@ def aem_faq_qa():
         args.append("--plan")
         return run_logged("AEM FAQ QA Plan", args)
 
-    if not ensure_aem_chrome(["Log into Global, Europe, and America AEM in the Chrome window.", "Return here after all three author servers are ready."]):
+    if not ensure_faq_chrome():
         return
     if not confirm("Audit and review every unapproved parent, then copy approved children?", False):
         return
@@ -218,6 +275,27 @@ def ensure_aem_chrome(login_lines):
     return panel("Chrome Login", login_lines, wait=True)
 
 
+def ensure_faq_chrome():
+    if not chrome_ready():
+        chrome = chrome_command()
+        if not chrome:
+            panel("Chrome Not Found", ["Install Google Chrome, or set CHROME to its executable path."], wait=True)
+            return False
+        subprocess.Popen([chrome, "--remote-debugging-port=9222", f"--user-data-dir={CHROME_PROFILE}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(40):
+            if chrome_ready():
+                break
+            time.sleep(0.25)
+        else:
+            panel("Chrome Did Not Start", ["Close Chrome and try again."], wait=True)
+            return False
+    values = load_env()
+    if not all(values.get(name) for name in ("WMC_LOGIN_URL", "WMC_USERNAME", "WMC_PASSWORD")):
+        panel("Samsung WMC Setup", ["Copy .env.example to .env and fill the three WMC values."], wait=True)
+        return False
+    return run_logged("Samsung WMC Login", ["node", str(ROOT / "aem_wmc_login.mjs")], env=values, mfa=True)
+
+
 def chrome_ready():
     try:
         with urlopen("http://127.0.0.1:9222/json/version", timeout=0.2) as response:
@@ -230,22 +308,23 @@ def python():
     return os.environ.get("PYTHON", sys.executable)
 
 
-def run_logged(title, args, cwd=None, review=False):
+def run_logged(title, args, cwd=None, review=False, env=None, mfa=False):
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-{slug(title)}.log"
     with log_path.open("w", encoding="utf-8") as log:
         log.write("$ " + " ".join(shlex.quote(str(arg)) for arg in args) + "\n\n")
         log.flush()
-        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-        wait_process(title, process, log_path, review)
+        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, **(env or {}), "PYTHONIOENCODING": "utf-8"})
+        return wait_process(title, process, log_path, review, mfa)
 
 
-def wait_process(title, process, log_path, review=False):
+def wait_process(title, process, log_path, review=False, mfa=False):
     def draw(screen):
         setup_screen(screen)
         screen.timeout(250)
         started = time.time()
         handled_review = ""
+        handled_mfa = False
         while process.poll() is None:
             clear_screen(screen)
             height, width = screen.getmaxyx()
@@ -270,11 +349,15 @@ def wait_process(title, process, log_path, review=False):
                     handled_review = pending
                     if not review_prompt(screen, process, lines, pending):
                         process.terminate()
-                        return
+                        return False
                     continue
+            if mfa and not handled_mfa and "MFA READY" in lines:
+                handled_mfa = True
+                mfa_prompt(screen, process)
+                continue
             if screen.getch() == 3:
                 process.terminate()
-                return
+                return False
         clear_screen(screen)
         status = "completed" if process.returncode == 0 else f"exited with code {process.returncode}"
         height, width = screen.getmaxyx()
@@ -285,14 +368,36 @@ def wait_process(title, process, log_path, review=False):
         while True:
             key = screen.getch()
             if key in (10, 13):
-                return
+                return process.returncode == 0
             if key == ord("l"):
-                return view_log(log_path)
+                view_log(log_path)
 
     try:
         curses.wrapper(draw)
     except KeyboardInterrupt:
         process.terminate()
+        return False
+
+
+def mfa_prompt(screen, process):
+    screen.timeout(-1)
+    while True:
+        clear_screen(screen)
+        height, width = screen.getmaxyx()
+        header(screen, "Samsung phone approval")
+        screen.addnstr(5, 4, "Approve the Samsung 2FA request on your phone.", width - 8, curses.color_pair(3))
+        screen.addnstr(7, 4, "Only continue after the approval succeeds.", width - 8, curses.color_pair(6))
+        footer(screen, " Enter continue after approval  Esc cancel ")
+        key = screen.getch()
+        if key in (10, 13):
+            process.stdin.write("\n")
+            process.stdin.flush()
+            screen.timeout(250)
+            return
+        if key == 27:
+            process.terminate()
+            screen.timeout(250)
+            return
 
 
 def review_prompt(screen, process, lines, review_line):
@@ -393,6 +498,17 @@ def pick_file():
         return ""
 
 
+def load_env():
+    values = {}
+    if not ENV_FILE.exists():
+        return values
+    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key and not key.startswith("#"):
+            values[key.strip()] = value.strip()
+    return values
+
+
 def chrome_command():
     configured = os.environ.get("CHROME")
     if configured:
@@ -420,6 +536,7 @@ def setup_screen(screen, cursor=False):
         curses.init_pair(3, curses.COLOR_WHITE, -1)
         curses.init_pair(4, curses.COLOR_YELLOW, -1)
         curses.init_pair(5, curses.COLOR_GREEN, -1)
+        curses.init_pair(6, curses.COLOR_CYAN, -1)
 
 
 def clear_screen(screen):
@@ -433,13 +550,14 @@ def screen_text(value):
 
 def header(screen, title):
     height, width = screen.getmaxyx()
-    screen.addnstr(1, 2, title, width - 4, curses.A_BOLD | curses.color_pair(2))
+    screen.addnstr(0, 2, "SJ DESIGN  /  AUTOMATION HUB", width - 4, curses.A_BOLD | curses.color_pair(6))
+    screen.addnstr(1, 4, screen_text(title), width - 8, curses.A_BOLD | curses.color_pair(2))
     screen.hline(2, 2, curses.ACS_HLINE, max(0, width - 4), curses.color_pair(2))
 
 
 def footer(screen, text):
     height, width = screen.getmaxyx()
-    screen.addnstr(height - 1, 0, text, width - 1, curses.color_pair(1) | curses.A_BOLD)
+    screen.addnstr(height - 1, 0, screen_text(text.center(max(1, width - 1))), width - 1, curses.color_pair(1) | curses.A_BOLD)
 
 
 if __name__ == "__main__":
