@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,6 +52,18 @@ class DotenvTest(unittest.TestCase):
 
         with patch.object(hub.curses, "wrapper", return_value=True):
             self.assertTrue(hub.wait_process("WMC", Process(), Path("/tmp/no-log"), return_on_success=True))
+
+    def test_jira_login_starts_browser_before_showing_login_screen(self):
+        class Process:
+            stdin = StringIO()
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(hub, "LOG_DIR", Path(directory)), \
+                 patch.object(hub.subprocess, "Popen", return_value=Process()) as popen, \
+                 patch.object(hub, "panel", side_effect=lambda *args, **kwargs: bool(popen.called)), \
+                 patch.object(hub, "wait_process"):
+                hub.jira_login()
+        self.assertTrue(popen.called)
 
 
 if __name__ == "__main__":

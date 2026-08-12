@@ -126,15 +126,6 @@ def aem_publishing():
 
 
 def jira_login():
-    if not panel(
-        "Jira Login Setup",
-        [
-            "A browser will open for manual Jira SSO/MFA.",
-            "Finish logging in there, then press Enter here to save this hub's local session.",
-        ],
-        wait=True,
-    ):
-        return
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-jira-login-setup.log"
     with log_path.open("w", encoding="utf-8") as log:
@@ -142,7 +133,7 @@ def jira_login():
             [python(), str(ROOT / "auth_login.py")],
             stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1,
         )
-        if panel("Jira Login", ["Complete SSO/MFA in the browser, then press Enter."], wait=True):
+        if panel("Jira Login", ["Complete SSO/MFA in the browser, then press Enter to save this hub's local session."], wait=True):
             process.stdin.write("\n")
             process.stdin.flush()
             wait_process("Jira Login Setup", process, log_path)
