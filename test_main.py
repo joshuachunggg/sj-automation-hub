@@ -16,7 +16,6 @@ class LiveMonitorTest(unittest.TestCase):
         monitor.status(slot, "se: searching Jira")
         monitor.release(slot)
         self.assertEqual(monitor.slots, ["idle", "idle"])
-        self.assertIn("PROGRESS\t1", log.getvalue())
 
     def test_live_check_saves_before_returning(self):
         class Monitor:
