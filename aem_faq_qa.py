@@ -215,8 +215,12 @@ def script(char):
     name = unicodedata.name(char, "")
     if "LATIN" in name:
         return "Latin"
-    if any(marker in name for marker in ("CJK", "HIRAGANA", "KATAKANA", "HANGUL")):
-        return "East Asian"
+    if "HANGUL" in name:
+        return "Korean"
+    if "HIRAGANA" in name or "KATAKANA" in name:
+        return "Japanese"
+    if "CJK" in name:
+        return "Chinese"
     for marker, label in (("ARABIC", "Arabic"), ("CYRILLIC", "Cyrillic"), ("HEBREW", "Hebrew"), ("MYANMAR", "Burmese"), ("THAI", "Thai"), ("DEVANAGARI", "Devanagari")):
         if marker in name:
             return label

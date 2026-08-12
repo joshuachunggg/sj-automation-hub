@@ -51,6 +51,10 @@ class AemFaqQaTest(unittest.TestCase):
     def test_language_findings_allows_english_on_any_page(self):
         self.assertEqual(language_findings([{"text": ["รีสตาร์ท Galaxy Watch เพื่อดำเนินการต่อ"]}]), [])
 
+    def test_language_findings_flags_korean_on_chinese_page(self):
+        findings = language_findings([{"text": ["請重新啟動手錶，然後檢查裝置是否可以正常運作。시계를 다시 시작하세요."]}])
+        self.assertEqual(findings, ["possible mixed language: Korean text on a Chinese page"])
+
     def test_audit_findings_ignores_component_count_and_order(self):
         audit = {"components": [{"type": "text", "settings": {}, "text": []}]}
         baseline = {"components": [
