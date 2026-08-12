@@ -27,9 +27,9 @@ def main():
         choice = menu(
             "SJ Design Automation Hub",
             [
-                ("AEM FAQ Publishing", aem_publishing, "Publish pending FAQ translations through Jira"),
-                ("AEM Component Copier", component_copier, "Copy missing author-page components"),
-                ("AEM FAQ QA", aem_faq_qa, "Audit and copy FAQ content across locales"),
+                ("Live publishing", aem_publishing, "Publish pending FAQ translations through Jira"),
+                ("UK/CA Master", component_copier, "Copy missing author-page components"),
+                ("Finalize Authoring", aem_faq_qa, "Audit and copy FAQ content across locales"),
                 ("Logs", logs, "Open a saved run log"),
                 ("Quit", None, "Close the hub"),
             ],

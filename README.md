@@ -9,8 +9,6 @@ A native terminal hub for AEM FAQ publishing, FAQ QA, and component copying. It 
 2. Open Terminal and run:
 
    ```sh
-   git clone https://github.com/joshuachunggg/sj-automation-hub.git
-   cd sj-automation-hub
    python3 -m venv .venv
    .venv/bin/pip install -r requirements.txt
    .venv/bin/playwright install chromium
