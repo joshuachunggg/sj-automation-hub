@@ -30,6 +30,28 @@ class DotenvTest(unittest.TestCase):
             hub.activate_dev_chrome()
         self.assertEqual(run.call_args.args[0][:2], ["osascript", "-e"])
 
+    def test_faq_login_returns_directly_to_qa_after_success(self):
+        with patch.object(hub, "use_existing_dev_chrome", return_value=False), \
+             patch.object(hub, "dev_chrome_ready", return_value=True), \
+             patch.object(hub, "run_logged", return_value=True) as run:
+            with patch.object(hub, "load_env", return_value={"WMC_LOGIN_URL": "url", "WMC_USERNAME": "user", "WMC_PASSWORD": "pass"}):
+                self.assertTrue(hub.ensure_faq_chrome())
+        self.assertTrue(run.call_args.kwargs["return_on_success"])
+
+    def test_existing_dev_chrome_skips_wmc_login(self):
+        with patch.object(hub, "use_existing_dev_chrome", return_value=True), \
+             patch.object(hub, "run_logged") as run:
+            self.assertTrue(hub.ensure_faq_chrome())
+        run.assert_not_called()
+
+    def test_process_screen_returns_handoff_success(self):
+        class Process:
+            def terminate(self):
+                pass
+
+        with patch.object(hub.curses, "wrapper", return_value=True):
+            self.assertTrue(hub.wait_process("WMC", Process(), Path("/tmp/no-log"), return_on_success=True))
+
 
 if __name__ == "__main__":
     unittest.main()

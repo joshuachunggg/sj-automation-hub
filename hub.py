@@ -17,6 +17,7 @@ CHROME_PROFILE = ROOT / ".aem-chrome"
 LOG_DIR = ROOT / "logs"
 ENV_FILE = ROOT / ".env"
 CDP_ENDPOINT = "http://127.0.0.1:9223"
+CDP_ENDPOINTS = ("http://127.0.0.1:9223", "http://127.0.0.1:9222")
 
 
 def main():
@@ -266,7 +267,7 @@ def confirm(label, default):
 
 
 def ensure_aem_chrome(login_lines):
-    if dev_chrome_ready():
+    if use_existing_dev_chrome():
         return True
     if not launch_dev_chrome():
         return False
@@ -275,6 +276,8 @@ def ensure_aem_chrome(login_lines):
 
 
 def ensure_faq_chrome():
+    if use_existing_dev_chrome():
+        return True
     if not dev_chrome_ready():
         if not launch_dev_chrome():
             return False
@@ -290,17 +293,37 @@ def ensure_faq_chrome():
     return run_logged(
         "Samsung WMC Login",
         ["node", str(ROOT / "aem_wmc_login.mjs")],
-        env=values, mfa=True,
+        env=values, mfa=True, return_on_success=True,
     )
 
 
 def dev_chrome_ready():
+    return bool(dev_chrome_endpoint())
+
+
+def dev_chrome_endpoint():
+    for endpoint in CDP_ENDPOINTS:
+        if endpoint_ready(endpoint):
+            return endpoint
+    return ""
+
+
+def endpoint_ready(endpoint):
     try:
-        with urlopen(f"{CDP_ENDPOINT}/json/version", timeout=0.2) as response:
+        with urlopen(f"{endpoint}/json/version", timeout=0.2) as response:
             version = json.load(response)
             return response.status == 200 and "Chrome" in version.get("Browser", "") and bool(version.get("webSocketDebuggerUrl"))
     except (OSError, ValueError):
         return False
+
+
+def use_existing_dev_chrome():
+    global CDP_ENDPOINT
+    endpoint = dev_chrome_endpoint()
+    if endpoint:
+        CDP_ENDPOINT = endpoint
+        return True
+    return False
 
 
 def chrome_ready():
@@ -312,23 +335,23 @@ def python():
     return os.environ.get("PYTHON", sys.executable)
 
 
-def run_logged(title, args, cwd=None, review=False, env=None, mfa=False):
+def run_logged(title, args, cwd=None, review=False, env=None, mfa=False, return_on_success=False):
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-{slug(title)}.log"
     with log_path.open("w", encoding="utf-8") as log:
         log.write("$ " + " ".join(shlex.quote(str(arg)) for arg in args) + "\n\n")
         log.flush()
         process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, **(env or {}), "CDP": CDP_ENDPOINT, "PYTHONIOENCODING": "utf-8"})
-        return wait_process(title, process, log_path, review, mfa)
+        return wait_process(title, process, log_path, review, mfa, return_on_success)
 
 
-def wait_process(title, process, log_path, review=False, mfa=False):
+def wait_process(title, process, log_path, review=False, mfa=False, return_on_success=False):
     def draw(screen):
         setup_screen(screen)
         screen.timeout(250)
         started = time.time()
         handled_review = ""
-        handled_mfa = False
+        handled_server_setup = False
         while process.poll() is None:
             clear_screen(screen)
             height, width = screen.getmaxyx()
@@ -355,14 +378,19 @@ def wait_process(title, process, log_path, review=False, mfa=False):
                         process.terminate()
                         return False
                     continue
-            if mfa and not handled_mfa and any(line in ("MFA READY", "MFA CHECK") for line in lines):
-                handled_mfa = True
-                mfa_prompt(screen, process)
-                continue
+            if mfa and not handled_server_setup and "SERVER SETUP READY" in lines:
+                handled_server_setup = True
+                if server_setup_prompt(screen):
+                    process.terminate()
+                    return True
+                process.terminate()
+                return False
             if screen.getch() == 3:
                 process.terminate()
                 return False
         clear_screen(screen)
+        if return_on_success and process.returncode == 0:
+            return True
         status = "completed" if process.returncode == 0 else f"exited with code {process.returncode}"
         height, width = screen.getmaxyx()
         header(screen, title)
@@ -377,31 +405,28 @@ def wait_process(title, process, log_path, review=False, mfa=False):
                 view_log(log_path)
 
     try:
-        curses.wrapper(draw)
+        return curses.wrapper(draw)
     except KeyboardInterrupt:
         process.terminate()
         return False
 
 
-def mfa_prompt(screen, process):
+def server_setup_prompt(screen):
     screen.timeout(-1)
     while True:
         clear_screen(screen)
         height, width = screen.getmaxyx()
-        header(screen, "Samsung phone approval")
-        screen.addnstr(5, 4, "If Samsung asks for phone approval, approve it now.", width - 8, curses.color_pair(3))
-        screen.addnstr(7, 4, "Then press Enter. No prompt? Enter continues with the current WMC session.", width - 8, curses.color_pair(6))
-        footer(screen, " Enter continue  Esc cancel ")
+        header(screen, "Prepare AEM Support servers")
+        screen.addnstr(5, 4, "Complete Samsung 2FA if prompted, then open Support for Global, Europe, and America.", width - 8, curses.color_pair(3))
+        screen.addnstr(7, 4, "Wait until all three AEM pages finish loading, then return here.", width - 8, curses.color_pair(6))
+        footer(screen, " Enter continue with FAQ QA  Esc cancel ")
         key = screen.getch()
         if key in (10, 13):
-            process.stdin.write("\n")
-            process.stdin.flush()
             screen.timeout(250)
-            return
+            return True
         if key == 27:
-            process.terminate()
             screen.timeout(250)
-            return
+            return False
 
 
 def review_prompt(screen, process, lines, review_line):
