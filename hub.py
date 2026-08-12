@@ -350,7 +350,8 @@ def publishing_status(lines):
 def draw_publishing_status(screen, lines, scroll, key):
     workers, agents, locales = publishing_status(lines)
     height, width = screen.getmaxyx()
-    agent_rows = max(workers, len(agents))
+    total_agents = max(workers, len(agents))
+    agent_rows = min(total_agents, max(0, height - 9))
     locale_start = 5 + agent_rows
     visible = max(1, height - locale_start - 2)
     max_scroll = max(0, len(locales) - visible)
@@ -363,12 +364,14 @@ def draw_publishing_status(screen, lines, scroll, key):
     elif key == curses.KEY_NPAGE:
         scroll = min(max_scroll, scroll + visible)
 
-    screen.addnstr(3, 4, "Agents", width - 8, curses.A_BOLD | curses.color_pair(3))
+    screen.addnstr(3, 4, "Agents" if total_agents else "Agents (starting publisher...)", max(1, width - 8), curses.A_BOLD | curses.color_pair(3))
     for slot in range(1, agent_rows + 1):
-        screen.addnstr(4 + slot, 4, f"{slot:>2}. {agents.get(slot, 'idle')}", width - 8, curses.color_pair(3))
-    screen.addnstr(locale_start, 4, f"Locales ({scroll + 1}-{min(len(locales), scroll + visible)} of {len(locales)})", width - 8, curses.A_BOLD | curses.color_pair(3))
+        screen.addnstr(4 + slot, 4, f"{slot:>2}. {agents.get(slot, 'idle')}", max(1, width - 8), curses.color_pair(3))
+    if total_agents > agent_rows:
+        screen.addnstr(4 + agent_rows, 4, f"+ {total_agents - agent_rows} more agents (enlarge terminal)", max(1, width - 8), curses.color_pair(4))
+    screen.addnstr(locale_start, 4, f"Locales ({scroll + 1}-{min(len(locales), scroll + visible)} of {len(locales)})", max(1, width - 8), curses.A_BOLD | curses.color_pair(3))
     for row, ((sheet, _, site), status) in enumerate(list(locales.items())[scroll:scroll + visible], locale_start + 1):
-        screen.addnstr(row, 4, f"{sheet}/{site}: {status}", width - 8, curses.color_pair(3))
+        screen.addnstr(row, 4, f"{sheet}/{site}: {status}", max(1, width - 8), curses.color_pair(3))
     return scroll
 
 
