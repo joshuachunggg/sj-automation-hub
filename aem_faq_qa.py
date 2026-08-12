@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import subprocess
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -189,7 +190,37 @@ def audit_findings(audit, baseline):
         if component["type"] == reference["type"] and component["settings"] != reference["settings"]:
             findings.append(f"component {index} settings differ from the sheet baseline")
         findings.extend(text_findings(component["text"]))
+    findings.extend(language_findings(components))
     return findings
+
+
+def language_findings(components):
+    """Flag a substantial unexpected writing system on one FAQ page."""
+    texts = [text for component in components for text in component["text"]]
+    scripts = [script(char) for text in texts for char in text]
+    scripts = [name for name in scripts if name]
+    if not scripts:
+        return []
+    expected = max(set(scripts), key=scripts.count)
+    findings = []
+    for text in texts:
+        foreign = [name for name in (script(char) for char in text) if name and name != expected]
+        if len(foreign) >= 3:
+            findings.append(f"possible mixed language: {max(set(foreign), key=foreign.count)} text on a {expected} page")
+            break
+    return findings
+
+
+def script(char):
+    name = unicodedata.name(char, "")
+    if "LATIN" in name:
+        return "Latin"
+    if any(marker in name for marker in ("CJK", "HIRAGANA", "KATAKANA", "HANGUL")):
+        return "East Asian"
+    for marker, label in (("ARABIC", "Arabic"), ("CYRILLIC", "Cyrillic"), ("HEBREW", "Hebrew"), ("MYANMAR", "Burmese"), ("THAI", "Thai"), ("DEVANAGARI", "Devanagari")):
+        if marker in name:
+            return label
+    return ""
 
 
 def text_findings(values):

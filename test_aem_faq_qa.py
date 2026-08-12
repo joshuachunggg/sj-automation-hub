@@ -7,7 +7,7 @@ logging.disable(logging.CRITICAL)
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-from aem_faq_qa import audit_findings, audit_page, column_kind, detail_ids, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
+from aem_faq_qa import audit_findings, audit_page, column_kind, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
 from hub import chrome_command, chrome_ready, pick_file
 
 
@@ -40,6 +40,13 @@ class AemFaqQaTest(unittest.TestCase):
     def test_text_findings_detects_burmese_step_punctuation(self):
         findings = text_findings(["<b>အဆင့် ၁</b>. <b>အဆင့် ၂</b>။"])
         self.assertIn("differing punctuation after အဆင့်: ., ။", findings)
+
+    def test_language_findings_flags_foreign_script(self):
+        findings = language_findings([{"text": ["Restart your watch. အဆင့် သုံး"]}])
+        self.assertEqual(findings, ["possible mixed language: Burmese text on a Latin page"])
+
+    def test_language_findings_ignores_product_names_and_punctuation(self):
+        self.assertEqual(language_findings([{"text": ["Restart Galaxy Watch 7."]}]), [])
 
     def test_audit_findings_ignores_component_count_and_order(self):
         audit = {"components": [{"type": "text", "settings": {}, "text": []}]}
