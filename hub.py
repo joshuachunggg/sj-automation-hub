@@ -347,32 +347,33 @@ def publishing_status(lines):
     return workers, agents, locales
 
 
-def draw_publishing_status(screen, lines, scroll, key):
+def draw_publishing_status(screen, lines, agent_scroll, locale_scroll, focus, key):
     workers, agents, locales = publishing_status(lines)
     height, width = screen.getmaxyx()
     total_agents = max(workers, len(agents))
-    agent_rows = min(total_agents, max(0, height - 9))
-    locale_start = 5 + agent_rows
-    visible = max(1, height - locale_start - 2)
-    max_scroll = max(0, len(locales) - visible)
-    if key in (curses.KEY_UP, ord("k")):
-        scroll = max(0, scroll - 1)
-    elif key in (curses.KEY_DOWN, ord("j")):
-        scroll = min(max_scroll, scroll + 1)
-    elif key == curses.KEY_PPAGE:
-        scroll = max(0, scroll - visible)
-    elif key == curses.KEY_NPAGE:
-        scroll = min(max_scroll, scroll + visible)
+    if key == 9:
+        focus = "agents" if focus == "locales" else "locales"
+    available = max(2, height - 6)
+    agent_rows = min(total_agents, max(0, available - (2 if locales else 1)))
+    locale_start = 4 + agent_rows
+    locale_rows = max(1, height - locale_start - 3)
+    scroll_step = locale_rows if key in (curses.KEY_PPAGE, curses.KEY_NPAGE) else 1
+    direction = -scroll_step if key in (curses.KEY_UP, ord("k"), curses.KEY_PPAGE) else scroll_step if key in (curses.KEY_DOWN, ord("j"), curses.KEY_NPAGE) else 0
+    if focus == "agents":
+        agent_scroll = min(max(0, agent_scroll + direction), max(0, total_agents - agent_rows))
+    else:
+        locale_scroll = min(max(0, locale_scroll + direction), max(0, len(locales) - locale_rows))
 
-    screen.addnstr(3, 4, "Agents" if total_agents else "Agents (starting publisher...)", max(1, width - 8), curses.A_BOLD | curses.color_pair(3))
-    for slot in range(1, agent_rows + 1):
-        screen.addnstr(4 + slot, 4, f"{slot:>2}. {agents.get(slot, 'idle')}", max(1, width - 8), curses.color_pair(3))
-    if total_agents > agent_rows:
-        screen.addnstr(4 + agent_rows, 4, f"+ {total_agents - agent_rows} more agents (enlarge terminal)", max(1, width - 8), curses.color_pair(4))
-    screen.addnstr(locale_start, 4, f"Locales ({scroll + 1}-{min(len(locales), scroll + visible)} of {len(locales)})", max(1, width - 8), curses.A_BOLD | curses.color_pair(3))
-    for row, ((sheet, _, site), status) in enumerate(list(locales.items())[scroll:scroll + visible], locale_start + 1):
+    agent_label = "Agents" if total_agents else "Agents (starting publisher...)"
+    agent_range = f" ({agent_scroll + 1}-{min(total_agents, agent_scroll + agent_rows)} of {total_agents})" if total_agents else ""
+    locale_range = f"{locale_scroll + 1}-{min(len(locales), locale_scroll + locale_rows)} of {len(locales)}" if locales else "waiting"
+    screen.addnstr(3, 4, f"{'> ' if focus == 'agents' else '  '}{agent_label}{agent_range}", max(1, width - 8), curses.A_BOLD | curses.color_pair(3))
+    for row, slot in enumerate(range(agent_scroll + 1, agent_scroll + agent_rows + 1), 4):
+        screen.addnstr(row, 4, f"{slot:>2}. {agents.get(slot, 'idle')}", max(1, width - 8), curses.color_pair(3))
+    screen.addnstr(locale_start, 4, f"{'> ' if focus == 'locales' else '  '}Locales ({locale_range})", max(1, width - 8), curses.A_BOLD | curses.color_pair(3))
+    for row, ((sheet, _, site), status) in enumerate(list(locales.items())[locale_scroll:locale_scroll + locale_rows], locale_start + 1):
         screen.addnstr(row, 4, f"{sheet}/{site}: {status}", max(1, width - 8), curses.color_pair(3))
-    return scroll
+    return agent_scroll, locale_scroll, focus
 
 
 def run_logged(title, args, cwd=None, review=False, env=None, mfa=False, return_on_success=False):
@@ -392,7 +393,8 @@ def wait_process(title, process, log_path, review=False, mfa=False, return_on_su
         started = time.time()
         handled_review = ""
         handled_server_setup = False
-        locale_scroll = 0
+        agent_scroll = locale_scroll = 0
+        publishing_focus = "locales"
         while process.poll() is None:
             clear_screen(screen)
             height, width = screen.getmaxyx()
@@ -400,8 +402,8 @@ def wait_process(title, process, log_path, review=False, mfa=False, return_on_su
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
             key = screen.getch()
             if title == "AEM FAQ Publishing":
-                locale_scroll = draw_publishing_status(screen, lines, locale_scroll, key)
-                footer(screen, " Up/Down scroll locales  Ctrl+C stop  live log is saved ")
+                agent_scroll, locale_scroll, publishing_focus = draw_publishing_status(screen, lines, agent_scroll, locale_scroll, publishing_focus, key)
+                footer(screen, " Tab switch list  Up/Down scroll  Ctrl+C stop  live log is saved ")
                 screen.refresh()
                 if key == 3:
                     process.terminate()
