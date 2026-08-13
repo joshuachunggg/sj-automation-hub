@@ -115,14 +115,18 @@ async function publishOnce({ siteCode, slug }) {
   try {
     await page.goto('https://jira.secext.samsung.net/', { waitUntil: 'domcontentloaded' });
     await dismissNotice(page);
-    await uiClick(await ensureJiraLogin(page));
+    const tickets = await ensureJiraLogin(page);
+    const ticketsUrl = await tickets.getAttribute('href');
+    if (!ticketsUrl) throw new Error('Jira ticket navigation has no URL.');
+    await page.goto(new URL(ticketsUrl, page.url()).href, { waitUntil: 'domcontentloaded' });
     const search = page.getByRole('textbox', { name: 'Contains text' });
+    await search.waitFor({ state: 'visible', timeout: 30000 });
     await search.fill(`${siteCode} ${slug}`);
     await search.press('Enter');
-    await page.waitForLoadState('networkidle');
+    await waitForIssueResults(page);
     let rows = page.getByRole('link', { name: new RegExp(`^${escapeRe(siteCode)}\\b`, 'i') });
     if (!await rows.count()) {
-      await search.fill(slug); await search.press('Enter'); await page.waitForLoadState('networkidle');
+      await search.fill(slug); await search.press('Enter'); await waitForIssueResults(page);
       rows = page.getByRole('link', { name: new RegExp(`\\[${escapeRe(siteCode)}\\]|\\b${escapeRe(siteCode)}\\b`, 'i') });
     }
     const matches = [];
@@ -175,27 +179,23 @@ function production(page) { return page.locator('#opsbar-transitions_more').filt
 async function isLive(page) { const label = page.locator('#opsbar-transitions_more .dropdown-text'); return await label.isVisible().catch(() => false) && (await label.innerText()).trim().toUpperCase() === 'LIVE'; }
 async function uiClick(locator) {
   await locator.waitFor({ state: 'visible', timeout: 20000 });
-  await locator.click({ noWaitAfter: true });
+  await locator.click();
   await new Promise(resolve => setTimeout(resolve, 300));
 }
 async function confirm(page, name, success = null) {
   const dialog = page.locator('section[role="dialog"]').filter({ has: page.getByRole('heading', { name, exact: true }) });
-  await dialog.locator('#issue-workflow-transition-submit').waitFor({ state: 'visible', timeout: 20000 });
-  const result = await page.evaluate(async () => {
-    const form = document.querySelector('#issue-workflow-transition');
-    const submit = document.querySelector('#issue-workflow-transition-submit');
-    if (!form || !submit) throw new Error('Jira workflow form is missing.');
-    const body = new URLSearchParams(new FormData(form));
-    body.append(submit.name, submit.value);
-    const response = await fetch(form.action, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body });
-    return { ok: response.ok, status: response.status };
-  });
-  if (!result.ok) throw new Error(`Jira '${name}' transition failed: HTTP ${result.status}`);
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  if (success) await success();
+  const button = dialog.locator('#issue-workflow-transition-submit');
+  await button.waitFor({ state: 'visible', timeout: 20000 });
+  for (let i = 0; i < 6; i++) {
+    await uiClick(button).catch(() => {});
+    if (await dialog.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true).catch(() => false)) return;
+    if (success && i >= 2 && await success()) return;
+  }
+  if (!success || !await success()) throw new Error(`Clicked '${name}' 6 times, but its modal never closed.`);
 }
 function escapeRe(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function exactSlug(text, slug) { return new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(slug)}($|[^A-Za-z0-9_-])`).test(text); }
+async function waitForIssueResults(page) { await page.locator('a.issue-link').first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}); }
 function transientBrowserError(error) { return /(detached from the DOM|Timeout .*exceeded|Navigation|net::ERR|Target page, context or browser has been closed)/i.test(String(error)); }
 async function post(page, url, fields) {
   await page.goto(`${new URL(url).origin}/libs/granite/csrf/token.json`, { waitUntil: 'domcontentloaded' });
