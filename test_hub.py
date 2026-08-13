@@ -36,6 +36,11 @@ class HubCommandTest(unittest.TestCase):
         self.assertEqual(view["workers"]["1"]["site"], "uk")
         self.assertEqual(view["locales"]["uk"]["status"], "live")
 
+    def test_dashboard_keeps_pending_qa_findings_current(self):
+        view = hub.dashboard('UI {"kind":"qa","event":"parent","site":"uk","status":"pending","findings":["different punctuation"]}')
+        self.assertEqual(view["current"]["status"], "pending")
+        self.assertEqual(view["current"]["findings"], ["different punctuation"])
+
 
 if __name__ == "__main__":
     unittest.main()

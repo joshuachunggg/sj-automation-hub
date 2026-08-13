@@ -23,9 +23,16 @@ server.listen(8766, '127.0.0.1');
 async function handle(request) {
   if (request.action === 'login') return login();
   if (request.action === 'done') return true;
+  if (request.action === 'open') return openEditor(request.url);
   if (request.action === 'audit') return audit(request);
   if (request.action === 'copy') return copy(request);
   throw new Error(`Unknown browser action: ${request.action}`);
+}
+async function openEditor(url) {
+  reviewPage = !reviewPage || reviewPage.isClosed() ? await openTab(context) : reviewPage;
+  await reviewPage.goto(url, { waitUntil: 'domcontentloaded' });
+  await reviewPage.bringToFront();
+  return true;
 }
 async function login() {
   await home.goto('https://wds.samsung.com/wds/sso/login/forwardLogin.do', { waitUntil: 'domcontentloaded' });
@@ -55,7 +62,7 @@ async function audit({ host, path, editorUrl }) {
     if (!response?.ok() || !body.startsWith('{')) throw new Error(`Not authorized for ${host}; return to WMC home and finish Support login.`);
     const grid = JSON.parse(body)?.['jcr:content']?.root?.responsivegrid?.responsivegrid;
     if (!grid) throw new Error(`No FAQ component grid at ${path}`);
-    if (editorUrl) { await page.goto(editorUrl, { waitUntil: 'domcontentloaded' }); await page.bringToFront(); }
+    if (editorUrl) await openEditor(editorUrl);
     return { components: Object.values(grid).filter(x => x?.['sling:resourceType']).map(x => ({ type: x['sling:resourceType'], settings: x, text: [] })) };
   } finally { if (page !== reviewPage) await closeTab(context, page); }
 }

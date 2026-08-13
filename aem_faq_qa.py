@@ -169,7 +169,7 @@ def run_all(wb, args):
         for finding in page_findings:
             findings += 1
             print(f"FINDING {ws.title}/{site}: {finding}", flush=True)
-        ui("parent", index=index, total=len(parents), sheet=ws.title, site=site, link=link, status="approved" if ws.cell(3, col).value else "qa done", findings=page_findings)
+        ui("parent", index=index, total=len(parents), sheet=ws.title, site=site, link=link, status="approved" if ws.cell(3, col).value else "pending", findings=page_findings)
         if args.review and not ws.cell(3, col).value:
             review_parent(wb, args.workbook, ws, col)
 
