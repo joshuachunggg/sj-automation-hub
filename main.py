@@ -4,9 +4,13 @@ import datetime
 import json
 import sys
 from openpyxl.utils import column_index_from_string
+from playwright.async_api import async_playwright
 from browser_owner import request as browser_request
+from config import JIRA_BASE_URL
 from sheet_io import load_workbook, find_columns, find_pending_columns, write_live_url
-from live_check import transform_editor_url
+from session_guard import dismiss_jira_notice, ensure_logged_in
+from live_check import transform_editor_url, check_live_async
+from jira_workflow import process_column
 
 
 def parse_args():
@@ -124,22 +128,38 @@ async def run_validate_only(pending, wb, log, workers, monitor):
 
 async def run_publish(pending, wb, log, workers, monitor):
     not_found, ambiguous, errored = [], [], []
-    semaphore = asyncio.Semaphore(workers)
-    results = await asyncio.gather(*(_publish_in_shared_firefox(col, semaphore, monitor, wb) for col in pending))
-    still_not_live = []
-    for col, result, error, live_check in results:
-        prefix = f"[{col.sheet_name}] col {col.col_idx}: {col.url_title} ({col.site_code})"
-        if error:
-            log(f"{prefix}\n  [ERROR] {error}")
-            errored.append((col, error))
-        elif result == "not_found":
-            log(f"{prefix}\n  not found")
-            not_found.append(col)
-        elif result == "ambiguous":
-            log(f"{prefix}\n  ambiguous")
-            ambiguous.append(col)
-        elif live_check and not live_check[2]:
-            still_not_live.append(live_check[:2])
+    session = browser_request("storage_state")
+    async with async_playwright() as playwright:
+        browser = await playwright.firefox.launch(headless=False, slow_mo=100)
+        context = await browser.new_context(storage_state=session)
+        try:
+            probe = await context.new_page()
+            await probe.goto(JIRA_BASE_URL, wait_until="domcontentloaded")
+            await dismiss_jira_notice(probe)
+            await ensure_logged_in(probe)
+            await probe.get_by_role("link", name="tickets Assigned to Me").wait_for(state="visible", timeout=30000)
+            await probe.close()
+
+            semaphore = asyncio.Semaphore(workers)
+            results = await asyncio.gather(*(_publish_one(context, col, semaphore, monitor) for col in pending))
+            published = []
+            for col, result, error in results:
+                prefix = f"[{col.sheet_name}] col {col.col_idx}: {col.url_title} ({col.site_code})"
+                if error:
+                    log(f"{prefix}\n  [ERROR] {error}")
+                    errored.append((col, error))
+                elif result == "not_found":
+                    log(f"{prefix}\n  not found")
+                    not_found.append(col)
+                elif result == "ambiguous":
+                    log(f"{prefix}\n  ambiguous")
+                    ambiguous.append(col)
+                else:
+                    published.append(col)
+            checks = await asyncio.gather(*(_wait_for_live(context, col, semaphore, monitor, wb) for col in published))
+            still_not_live = [(col, url) for col, url, is_live in checks if not is_live]
+        finally:
+            await browser.close()
 
     log("\n--- Report ---")
     log(f"Not found ({len(not_found)}): {[c.url_title for c in not_found]}")
@@ -152,35 +172,45 @@ async def run_publish(pending, wb, log, workers, monitor):
     log(f"Not confirmed live ({len(not_confirmed)}): {[f'{c.sheet_name}/{c.site_code}' for c in not_confirmed]}")
 
 
-async def _publish_in_shared_firefox(col, semaphore, monitor, wb):
+async def _publish_one(context, col, semaphore, monitor):
     async with semaphore:
         slot = monitor.claim(col)
         try:
-            monitor.status(slot, f"{col.site_code}: opening Jira")
-            result = await asyncio.to_thread(browser_request, "publish", siteCode=col.site_code, slug=col.url_title)
-            monitor.status(slot, f"{col.site_code}: {result}")
-            live_check = await _check_live(col, monitor, wb, slot) if result == "done" else None
-            return col, result, None, live_check
-        except Exception as error:
-            monitor.status(slot, f"{col.site_code}: error")
-            monitor.log(f"[{col.site_code}] [ERROR] {error}")
-            return col, None, str(error), None
+            for attempt in range(2):
+                page = await context.new_page()
+                try:
+                    monitor.status(slot, f"{col.site_code}: opening Jira")
+                    await page.goto(JIRA_BASE_URL, wait_until="domcontentloaded")
+                    await dismiss_jira_notice(page)
+                    await ensure_logged_in(page)
+                    result = await process_column(page, col, lambda message: monitor.status(slot, f"{col.site_code}: {message}"))
+                    monitor.status(slot, f"{col.site_code}: {result}")
+                    return col, result, None
+                except Exception as error:
+                    if attempt:
+                        monitor.status(slot, f"{col.site_code}: error")
+                        monitor.log(f"[{col.site_code}] [ERROR] {error}")
+                        return col, None, str(error)
+                    monitor.status(slot, f"{col.site_code}: retrying")
+                    monitor.log(f"[{col.site_code}] retrying after: {error}")
+                finally:
+                    await page.close()
         finally:
             monitor.release(slot)
 
 
-async def _wait_for_live_in_shared_firefox(col, semaphore, monitor, wb):
+async def _wait_for_live(context, col, semaphore, monitor, wb):
     async with semaphore:
         slot = monitor.claim(col)
-        try: return await _check_live(col, monitor, wb, slot)
+        try: return await _check_live(context, col, monitor, wb, slot)
         finally: monitor.release(slot)
 
 
-async def _check_live(col, monitor, wb, slot):
+async def _check_live(context, col, monitor, wb, slot):
     live_url = transform_editor_url(col.editor_url)
     for attempt in range(4):
         monitor.status(slot, f"{col.site_code}: checking live ({attempt + 1}/4)")
-        if await asyncio.to_thread(browser_request, "live", url=live_url):
+        if await check_live_async(context, live_url):
             write_live_url(wb, FILE_PATH, col.sheet_name, col.col_idx, live_url)
             monitor.status(slot, f"{col.site_code}: live")
             monitor.log(f"[{col.sheet_name}] col {col.col_idx} ({col.site_code}): verified live: {live_url}")

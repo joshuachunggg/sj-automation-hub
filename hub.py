@@ -14,6 +14,7 @@ from browser_owner import request as browser_request
 
 ROOT = Path(__file__).resolve().parent
 PROFILE = ROOT / ".firefox-profile"
+PYTHON = ROOT / ".venv" / "bin" / "python"
 LOG_DIR = ROOT / "logs"
 SSO_URL = "https://wds.samsung.com/wds/sso/login/forwardLogin.do"
 jobs = {}
@@ -22,19 +23,20 @@ lock = threading.Lock()
 
 def command(action, data):
     profile = str(PROFILE)
+    python = str(PYTHON if PYTHON.exists() else sys.executable)
     if action == "login":
-        return [sys.executable, str(ROOT / "auth_login.py"), "--profile", profile]
+        return [python, str(ROOT / "auth_login.py"), "--profile", profile]
     if action == "copy":
         return ["node", str(ROOT / "copy-aem-components.mjs"), "--source", data["source"], "--target", data["target"], "--yes", "--user-data-dir", profile]
     if action == "publish":
-        args = [sys.executable, str(ROOT / "main.py"), "--workbook", data["workbook"], "--workers", str(data.get("workers") or 10)]
+        args = [python, str(ROOT / "main.py"), "--workbook", data["workbook"], "--workers", str(data.get("workers") or 10)]
         if data.get("skip_countries"):
             args += ["--skip-country", data["skip_countries"]]
         if data.get("mode") == "validate": args.append("--validate-only")
         if data.get("mode") == "validate-all": args.append("--validate-all")
         return args
     if action == "qa":
-        args = [sys.executable, str(ROOT / "aem_faq_qa.py"), "--workbook", data["workbook"], "--browser", "firefox", "--user-data-dir", profile]
+        args = [python, str(ROOT / "aem_faq_qa.py"), "--workbook", data["workbook"], "--browser", "firefox", "--user-data-dir", profile]
         return args + (["--plan"] if data.get("mode") == "plan" else ["--retry-failed"] if data.get("mode") == "retry" else ["--all", "--review", "--apply"])
     raise ValueError("Unknown action")
 

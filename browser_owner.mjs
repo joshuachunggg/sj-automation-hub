@@ -8,6 +8,7 @@ const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).map(l
 const context = await firefox.launchPersistentContext(profile, { headless: false, slowMo: 100, args: ['--allow-downgrade'], firefoxUserPrefs: { 'browser.link.open_newwindow': 3, 'browser.link.open_newwindow.restriction': 0 } });
 let home = context.pages()[0] || await context.newPage(), reviewPage;
 let finishLogin = () => {};
+let transitioning = Promise.resolve();
 const server = net.createServer(socket => {
   let text = '';
   socket.on('data', async chunk => {
@@ -29,6 +30,8 @@ async function handle(request) {
   if (request.action === 'copy') return copy(request);
   if (request.action === 'exists') return exists(request);
   if (request.action === 'publish') return publish(request);
+  if (request.action === 'storage_state') return context.storageState();
+  if (request.action === 'jira_ready') return jiraReady();
   if (request.action === 'live') return live(request);
   throw new Error(`Unknown browser action: ${request.action}`);
 }
@@ -123,42 +126,42 @@ async function publishOnce({ siteCode, slug }) {
     await search.waitFor({ state: 'visible', timeout: 30000 });
     await search.fill(`${siteCode} ${slug}`);
     await search.press('Enter');
-    await waitForIssueResults(page);
-    let rows = page.getByRole('link', { name: new RegExp(`^${escapeRe(siteCode)}\\b`, 'i') });
-    let count = await rows.count();
-    if (!count) {
-      await search.fill(slug); await search.press('Enter'); await waitForIssueResults(page);
-      rows = page.getByRole('link', { name: new RegExp(`\\[${escapeRe(siteCode)}\\]|\\b${escapeRe(siteCode)}\\b`, 'i') });
-      count = await rows.count();
+    let searchResult = await ticketMatches(page, new RegExp(`^${escapeRe(siteCode)}\\b`, 'i'), slug);
+    if (!searchResult.matches.length) {
+      await search.fill(slug); await search.press('Enter');
+      const fallback = await ticketMatches(page, new RegExp(`\\[${escapeRe(siteCode)}\\]|\\b${escapeRe(siteCode)}\\b`, 'i'), slug);
+      searchResult = { ...fallback, searches: [searchResult, fallback] };
     }
-    if (!count) return 'not_found';
-    const matches = count === 1 ? [rows.first()] : await exactSlugRows(rows, slug);
-    if (matches.length !== 1) return 'ambiguous';
-    const issueUrl = await matches[0].getAttribute('href');
+    if (!searchResult.matches.length) return classified('not_found', siteCode, slug, searchResult);
+    if (searchResult.matches.length !== 1) return classified('ambiguous', siteCode, slug, searchResult);
+    const issueUrl = await searchResult.matches[0].getAttribute('href');
     if (!issueUrl) throw new Error(`Jira search result for ${siteCode} has no issue URL.`);
     await page.goto(new URL(issueUrl, page.url()).href, { waitUntil: 'domcontentloaded' });
-    if (await isLive(page)) return 'done';
-    if (!await production(page).isVisible().catch(() => false)) {
-      await uiClick(page.getByRole('button', { name: 'New Request' }));
-      await uiClick(page.getByRole('menuitem').filter({ hasText: 'Start AEM Workflow' }));
-      await confirm(page, 'Start AEM Workflow');
-    }
-    await uiClick(production(page));
-    await uiClick(page.getByRole('menuitem').filter({ hasText: 'Go To Live' }));
-    await confirm(page, 'Go To Live', () => isLive(page));
-    return 'done';
+    return transition(async () => {
+      if (await isLive(page)) return { status: 'done' };
+      if (!await production(page).isVisible().catch(() => false)) {
+        await uiClick(page.getByRole('button', { name: 'New Request' }));
+        await uiClick(page.getByRole('menuitem').filter({ hasText: 'Start AEM Workflow' }));
+        await confirm(page, 'Start AEM Workflow');
+      }
+      await uiClick(production(page));
+      await uiClick(page.getByRole('menuitem').filter({ hasText: 'Go To Live' }));
+      await confirm(page, 'Go To Live', () => isLive(page));
+      return { status: 'done' };
+    });
   } finally { await closeTab(context, page); }
 }
 async function live({ url }) {
   const target = url.startsWith('http') ? url : `https://${url}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try { return (await fetch(target, { signal: controller.signal })).status === 200; }
-  catch {
-    const page = await openTab(context);
-    try { return (await page.goto(target, { timeout: 30000 }))?.status() === 200; }
-    catch { return false; } finally { await closeTab(context, page); }
-  } finally { clearTimeout(timeout); }
+  const page = await openTab(context);
+  try { return (await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 }))?.status() === 200; }
+  catch { return false; } finally { await closeTab(context, page); }
+}
+async function jiraReady() {
+  await home.goto('https://jira.secext.samsung.net/', { waitUntil: 'domcontentloaded' });
+  await dismissNotice(home);
+  await ensureJiraLogin(home);
+  return true;
 }
 async function dismissNotice(page) {
   const dismissed = await page.evaluate(() => {
@@ -178,6 +181,11 @@ async function ensureJiraLogin(page) {
 }
 function production(page) { return page.locator('#opsbar-transitions_more').filter({ hasText: /\bPRODUCTION\b/i }); }
 async function isLive(page) { const label = page.locator('#opsbar-transitions_more .dropdown-text'); return await label.isVisible().catch(() => false) && (await label.innerText()).trim().toUpperCase() === 'LIVE'; }
+function transition(work) {
+  const task = transitioning.then(work);
+  transitioning = task.catch(() => {});
+  return task;
+}
 async function uiClick(locator) {
   await locator.waitFor({ state: 'visible', timeout: 20000 });
   await locator.click();
@@ -197,7 +205,28 @@ async function confirm(page, name, success = null) {
 function escapeRe(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function exactSlug(text, slug) { return new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(slug)}($|[^A-Za-z0-9_-])`).test(text); }
 async function exactSlugRows(rows, slug) { const matches = []; for (let i = 0; i < await rows.count(); i++) if (exactSlug(await rows.nth(i).innerText(), slug)) matches.push(rows.nth(i)); return matches; }
-async function waitForIssueResults(page) { await page.locator('a.issue-link').first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}); }
+async function ticketMatches(page, match, slug) {
+  await page.waitForLoadState('networkidle');
+  let rows = page.getByRole('link', { name: match });
+  let matches = await exactSlugRows(rows, slug);
+  const candidates = await candidateTexts(rows);
+  if (!matches.length) {
+    const next = page.locator('a[data-page="2"]');
+    if (await next.isVisible().catch(() => false)) {
+      await next.click();
+      await page.waitForLoadState('networkidle');
+      rows = page.getByRole('link', { name: match });
+      matches = await exactSlugRows(rows, slug);
+      candidates.push(...await candidateTexts(rows));
+    }
+  }
+  return { matches, candidates };
+}
+async function candidateTexts(rows) { return (await rows.allInnerTexts()).map(text => text.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 12); }
+function classified(status, siteCode, slug, result) {
+  const searches = result.searches || [result];
+  return { status, detail: { siteCode, slug, searches: searches.map(({ candidates, matches }) => ({ candidates, exactSlugMatches: matches.length })) } };
+}
 function transientBrowserError(error) { return /(detached from the DOM|Timeout .*exceeded|Navigation|net::ERR|Target page, context or browser has been closed)/i.test(String(error)); }
 async function post(page, url, fields) {
   await page.goto(`${new URL(url).origin}/libs/granite/csrf/token.json`, { waitUntil: 'domcontentloaded' });

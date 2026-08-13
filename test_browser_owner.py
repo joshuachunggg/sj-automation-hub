@@ -18,19 +18,36 @@ class BrowserOwnerTest(unittest.TestCase):
         self.assertIn("#issue-workflow-transition-submit", source)
         self.assertNotIn("fetch(form.action", source)
 
-    def test_publisher_uses_direct_issue_and_live_requests(self):
+    def test_publisher_uses_direct_issue_requests_and_browser_live_check(self):
         source = Path("browser_owner.mjs").read_text()
         self.assertIn("page.goto(new URL(issueUrl, page.url()).href", source)
         self.assertIn("page.goto(new URL(ticketsUrl, page.url()).href", source)
-        self.assertIn("fetch(target, { signal: controller.signal })", source)
+        self.assertIn("page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 })", source)
 
     def test_publisher_retries_transient_browser_failures(self):
         source = Path("browser_owner.mjs").read_text()
         self.assertIn("for (let attempt = 1; attempt <= 3; attempt++)", source)
         self.assertIn("transientBrowserError(error)", source)
 
-    def test_single_country_result_does_not_need_slug_filter(self):
-        self.assertIn("count === 1 ? [rows.first()] : await exactSlugRows(rows, slug)", Path("browser_owner.mjs").read_text())
+    def test_publisher_waits_for_results_and_always_checks_the_slug(self):
+        source = Path("browser_owner.mjs").read_text()
+        self.assertIn("await page.waitForLoadState('networkidle')", source)
+        self.assertIn("let matches = await exactSlugRows(rows, slug)", source)
+        self.assertIn("a[data-page=\"2\"]", source)
+
+    def test_publisher_falls_back_when_the_first_search_has_no_exact_match_and_returns_candidates(self):
+        source = Path("browser_owner.mjs").read_text()
+        self.assertIn("if (!searchResult.matches.length)", source)
+        self.assertIn("function classified(status, siteCode, slug, result)", source)
+        self.assertIn("candidateTexts(rows)", source)
+
+    def test_publisher_serializes_only_jira_transitions(self):
+        source = Path("browser_owner.mjs").read_text()
+        self.assertIn("let transitioning = Promise.resolve()", source)
+        self.assertIn("return transition(async () =>", source)
+
+    def test_owner_can_export_the_signed_in_session_for_a_fresh_publish_browser(self):
+        self.assertIn("if (request.action === 'storage_state') return context.storageState()", Path("browser_owner.mjs").read_text())
 
 
 if __name__ == "__main__":

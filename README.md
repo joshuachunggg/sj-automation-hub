@@ -7,12 +7,14 @@ Local web interface for Samsung AEM and Jira workflows. It runs only on `127.0.0
 Windows:
 
 ```powershell
-.\.venv\Scripts\python.exe hub.py
+.\.venv\Scripts\Activate.ps1            ## use this to just start venv, not script
+.\.venv\Scripts\python.exe hub.py       ## use this from non venv state to start the script and venv at same time
 ```
 
 macOS:
 
 ```bash
+source .venv/bin/activate               ## start venv
 .venv/bin/python hub.py
 ```
 

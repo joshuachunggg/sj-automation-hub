@@ -6,6 +6,9 @@ import hub
 
 
 class HubCommandTest(unittest.TestCase):
+    def test_commands_use_the_project_virtual_environment(self):
+        self.assertEqual(hub.command("publish", {"workbook": "workbook.xlsx"})[0], str(hub.PYTHON))
+
     def test_login_uses_shared_firefox_profile(self):
         args = hub.command("login", {})
         self.assertEqual(args[1].split("/")[-1], "auth_login.py")

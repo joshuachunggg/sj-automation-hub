@@ -28,9 +28,9 @@ class LiveMonitorTest(unittest.TestCase):
 
         col = SimpleNamespace(sheet_name="Europe", col_idx=22, site_code="se", editor_url="https://example.test/editor.html/content/samsung/se/page")
         with patch.object(main, "FILE_PATH", "test.xlsx", create=True), \
-             patch.object(main, "browser_request", return_value=True), \
+             patch.object(main, "check_live_async", new=AsyncMock(return_value=True)), \
              patch.object(main, "write_live_url") as write:
-            result = asyncio.run(main._wait_for_live_in_shared_firefox(col, asyncio.Semaphore(1), Monitor(), object()))
+            result = asyncio.run(main._wait_for_live(object(), col, asyncio.Semaphore(1), Monitor(), object()))
         self.assertTrue(result[2])
         write.assert_called_once()
 
@@ -47,12 +47,20 @@ class LiveMonitorTest(unittest.TestCase):
     def test_skip_countries_accepts_commas_repeats_and_case(self):
         self.assertEqual(skipped_countries(["UK, ca", "SG"]), {"uk", "ca", "sg"})
 
-    def test_publish_uses_browser_owner_not_a_new_firefox(self):
-        self.assertNotIn("launch_persistent_context", __import__("inspect").getsource(main.run_publish))
+    def test_publish_uses_a_fresh_firefox_context_with_the_signed_in_session(self):
+        source = __import__("inspect").getsource(main.run_publish)
+        self.assertIn('browser_request("storage_state")', source)
+        self.assertIn("playwright.firefox.launch", source)
+        self.assertIn("browser.new_context(storage_state=session)", source)
 
-    def test_publish_checks_and_saves_each_country_immediately(self):
-        source = __import__("inspect").getsource(main._publish_in_shared_firefox)
-        self.assertIn("await _check_live(col, monitor, wb, slot)", source)
+    def test_publish_checks_after_the_jira_phase(self):
+        source = __import__("inspect").getsource(main.run_publish)
+        self.assertIn("_wait_for_live", source)
+        self.assertNotIn("_check_live(context, col, monitor, wb, slot)", __import__("inspect").getsource(main._publish_one))
+
+    def test_publish_uses_v1_result_classification(self):
+        source = __import__("inspect").getsource(main.run_publish)
+        self.assertIn('result == "ambiguous"', source)
 
     def test_monitor_marks_skipped_countries_as_not_processed(self):
         monitor = LiveMonitor(1, io.StringIO())
