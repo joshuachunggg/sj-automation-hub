@@ -125,13 +125,14 @@ async function publishOnce({ siteCode, slug }) {
     await search.press('Enter');
     await waitForIssueResults(page);
     let rows = page.getByRole('link', { name: new RegExp(`^${escapeRe(siteCode)}\\b`, 'i') });
-    if (!await rows.count()) {
+    let count = await rows.count();
+    if (!count) {
       await search.fill(slug); await search.press('Enter'); await waitForIssueResults(page);
       rows = page.getByRole('link', { name: new RegExp(`\\[${escapeRe(siteCode)}\\]|\\b${escapeRe(siteCode)}\\b`, 'i') });
+      count = await rows.count();
     }
-    const matches = [];
-    for (let i = 0; i < await rows.count(); i++) if (exactSlug(await rows.nth(i).innerText(), slug)) matches.push(rows.nth(i));
-    if (!matches.length) return 'not_found';
+    if (!count) return 'not_found';
+    const matches = count === 1 ? [rows.first()] : await exactSlugRows(rows, slug);
     if (matches.length !== 1) return 'ambiguous';
     const issueUrl = await matches[0].getAttribute('href');
     if (!issueUrl) throw new Error(`Jira search result for ${siteCode} has no issue URL.`);
@@ -195,6 +196,7 @@ async function confirm(page, name, success = null) {
 }
 function escapeRe(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function exactSlug(text, slug) { return new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(slug)}($|[^A-Za-z0-9_-])`).test(text); }
+async function exactSlugRows(rows, slug) { const matches = []; for (let i = 0; i < await rows.count(); i++) if (exactSlug(await rows.nth(i).innerText(), slug)) matches.push(rows.nth(i)); return matches; }
 async function waitForIssueResults(page) { await page.locator('a.issue-link').first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}); }
 function transientBrowserError(error) { return /(detached from the DOM|Timeout .*exceeded|Navigation|net::ERR|Target page, context or browser has been closed)/i.test(String(error)); }
 async function post(page, url, fields) {

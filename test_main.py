@@ -50,6 +50,10 @@ class LiveMonitorTest(unittest.TestCase):
     def test_publish_uses_browser_owner_not_a_new_firefox(self):
         self.assertNotIn("launch_persistent_context", __import__("inspect").getsource(main.run_publish))
 
+    def test_publish_checks_and_saves_each_country_immediately(self):
+        source = __import__("inspect").getsource(main._publish_in_shared_firefox)
+        self.assertIn("await _check_live(col, monitor, wb, slot)", source)
+
     def test_monitor_marks_skipped_countries_as_not_processed(self):
         monitor = LiveMonitor(1, io.StringIO())
         with patch("builtins.print") as print_:

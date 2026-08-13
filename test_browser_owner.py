@@ -29,6 +29,9 @@ class BrowserOwnerTest(unittest.TestCase):
         self.assertIn("for (let attempt = 1; attempt <= 3; attempt++)", source)
         self.assertIn("transientBrowserError(error)", source)
 
+    def test_single_country_result_does_not_need_slug_filter(self):
+        self.assertIn("count === 1 ? [rows.first()] : await exactSlugRows(rows, slug)", Path("browser_owner.mjs").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
