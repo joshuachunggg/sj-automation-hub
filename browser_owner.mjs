@@ -8,7 +8,6 @@ const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).map(l
 const context = await firefox.launchPersistentContext(profile, { headless: false, slowMo: 100, args: ['--allow-downgrade'], firefoxUserPrefs: { 'browser.link.open_newwindow': 3, 'browser.link.open_newwindow.restriction': 0 } });
 let home = context.pages()[0] || await context.newPage(), reviewPage;
 let finishLogin = () => {};
-let clicking = Promise.resolve();
 const server = net.createServer(socket => {
   let text = '';
   socket.on('data', async chunk => {
@@ -157,14 +156,10 @@ async function ensureJiraLogin(page) {
 }
 function production(page) { return page.locator('#opsbar-transitions_more').filter({ hasText: /\bPRODUCTION\b/i }); }
 async function isLive(page) { const label = page.locator('#opsbar-transitions_more .dropdown-text'); return await label.isVisible().catch(() => false) && (await label.innerText()).trim().toUpperCase() === 'LIVE'; }
-function uiClick(locator) {
-  const click = clicking.then(async () => {
-    await locator.waitFor({ state: 'visible', timeout: 20000 });
-    await locator.click();
-    await new Promise(resolve => setTimeout(resolve, 300));
-  });
-  clicking = click.catch(() => {});
-  return click;
+async function uiClick(locator) {
+  await locator.waitFor({ state: 'visible', timeout: 20000 });
+  await locator.click({ noWaitAfter: true });
+  await new Promise(resolve => setTimeout(resolve, 300));
 }
 async function confirm(page, name, success = null) {
   const dialog = page.locator('section[role="dialog"]').filter({ has: page.getByRole('heading', { name, exact: true }) });

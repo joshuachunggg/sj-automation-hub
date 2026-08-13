@@ -17,8 +17,8 @@ class BrowserOwnerTest(unittest.TestCase):
         source = Path("browser_owner.mjs").read_text()
         self.assertIn("#issue-workflow-transition-submit", source)
 
-    def test_publisher_queues_shared_browser_clicks(self):
-        self.assertIn("function uiClick(locator)", Path("browser_owner.mjs").read_text())
+    def test_publisher_clicks_do_not_wait_for_navigation(self):
+        self.assertIn("locator.click({ noWaitAfter: true })", Path("browser_owner.mjs").read_text())
 
 
 if __name__ == "__main__":
