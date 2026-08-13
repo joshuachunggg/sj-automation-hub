@@ -30,13 +30,17 @@ async def _click_or_report(page, locator, description, col):
         )
 
 
-async def _status_is_live(page):
-    """Ground truth: the PRODUCTION status opsbar dropdown reads 'LIVE'."""
+async def _workflow_state(page):
     try:
         dropdown = page.locator("#opsbar-transitions_more")
-        return await dropdown.is_visible() and (await dropdown.inner_text()).strip().upper() == "LIVE"
+        return (await dropdown.inner_text()).strip().upper() if await dropdown.is_visible() else ""
     except Exception:
-        return False
+        return ""
+
+
+async def _status_is_live(page):
+    """Ground truth: the status dropdown reads 'LIVE'."""
+    return await _workflow_state(page) == "LIVE"
 
 
 def _production_dropdown(page):
@@ -45,11 +49,7 @@ def _production_dropdown(page):
 
 async def _is_in_production(page):
     """True after Start AEM Workflow has advanced the ticket to PRODUCTION."""
-    try:
-        await _production_dropdown(page).wait_for(state="visible", timeout=10000)
-        return True
-    except Exception:
-        return False
+    return await _workflow_state(page) == "PRODUCTION"
 
 
 async def _submit_and_wait_close(page, confirm_locator, modal_heading, description, col,
@@ -195,7 +195,8 @@ async def process_column(page, col, transition_lock, status=lambda _: None):
             status("already live")
             return "done"
 
-        if not await _is_in_production(page):
+        state = await _workflow_state(page)
+        if state == "NEW REQUEST":
             status("starting AEM workflow")
             # Step 6: New Request -> Start AEM Workflow -> confirm
             await _click_or_report(page, page.get_by_role("button", name="New Request"), "New Request button", col)
@@ -209,6 +210,8 @@ async def process_column(page, col, transition_lock, status=lambda _: None):
                 page.get_by_role("heading", name="Start AEM Workflow"),
                 "Start AEM Workflow confirm button", col,
             )
+        elif state != "PRODUCTION":
+            raise RuntimeError(f"Unexpected Jira workflow state: {state or 'not loaded'}")
 
         # Step 7: PRODUCTION -> Go To Live -> confirm
         status("sending to live")

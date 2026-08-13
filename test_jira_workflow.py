@@ -1,7 +1,7 @@
 import inspect
 import unittest
 
-from jira_workflow import _has_exact_slug, _is_in_production, _status_is_live
+from jira_workflow import _has_exact_slug, _is_in_production, _status_is_live, _workflow_state
 
 
 class ExactSlugTest(unittest.TestCase):
@@ -35,13 +35,20 @@ class ProductionStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await _status_is_live(page))
         self.assertEqual(page.selector, "#opsbar-transitions_more")
 
+    async def test_detects_new_request_without_waiting_for_production(self):
+        class Dropdown:
+            async def is_visible(self): return True
+            async def inner_text(self): return "New Request"
+
+        class Page:
+            def locator(self, selector): return Dropdown()
+
+        self.assertEqual(await _workflow_state(Page()), "NEW REQUEST")
+
     async def test_detects_production_dropdown(self):
         class Dropdown:
-            def filter(self, has_text):
-                return self
-
-            async def wait_for(self, state, timeout):
-                return None
+            async def is_visible(self): return True
+            async def inner_text(self): return "PRODUCTION"
 
         class Page:
             def locator(self, selector):
