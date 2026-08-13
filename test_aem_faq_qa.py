@@ -7,7 +7,7 @@ logging.disable(logging.CRITICAL)
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-from aem_faq_qa import audit_findings, audit_page, column_kind, configure_output, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
+from aem_faq_qa import FirefoxBridge, audit_findings, audit_page, column_kind, configure_output, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
 from hub import chrome_command, chrome_ready, clear_screen, pick_file, screen_text
 
 
@@ -132,6 +132,12 @@ class AemFaqQaTest(unittest.TestCase):
             self.assertEqual(audit_page("https://example.test", "/content/example"), {"components": [{"text": ["အဆင့်"]}]})
         self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
         self.assertEqual(run.call_args.kwargs["timeout"], 60)
+
+    def test_firefox_bridge_reads_utf8(self):
+        process = SimpleNamespace(stdout=SimpleNamespace(readline=lambda: '{"ready": true}\n'))
+        with patch("aem_faq_qa.subprocess.Popen", return_value=process) as popen:
+            FirefoxBridge("profile").start()
+        self.assertEqual(popen.call_args.kwargs["encoding"], "utf-8")
 
     def test_audit_timeout_does_not_stop_the_pass(self):
         wb = Workbook()

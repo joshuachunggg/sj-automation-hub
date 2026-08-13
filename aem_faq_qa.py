@@ -316,7 +316,8 @@ class FirefoxBridge:
 
     def start(self):
         self.process = subprocess.Popen(
-            ["node", str(NODE_FIREFOX_FINALIZE), self.profile], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
+            ["node", str(NODE_FIREFOX_FINALIZE), self.profile], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            text=True, encoding="utf-8", bufsize=1,
         )
         response = self._read()
         if not response.get("ready"):
