@@ -182,14 +182,14 @@ def aem_faq_qa():
         args.append("--plan")
         return run_logged("AEM FAQ QA Plan", args)
 
-    if not ensure_faq_browser(browser):
+    if browser == "chromium" and not ensure_faq_chrome():
         return
     if not confirm("Audit and review every unapproved parent, then copy approved children?", False):
         return
     args.append("--all")
     args += aem_browser_args(browser)
     args += ["--review", "--apply"]
-    run_logged("AEM FAQ QA Full Pass", args, review=True)
+    run_logged("AEM FAQ QA Full Pass", args, review=True, env=load_env() if browser == "firefox" else None)
 
 
 def logs():

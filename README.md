@@ -54,7 +54,7 @@ Fill `WMC_LOGIN_URL`, `WMC_USERNAME`, and `WMC_PASSWORD` in `.env`. Never share 
 
 ### Browser behavior
 
-Windows runs AEM work in Firefox by default. Its signed-in project profile is `.aem-firefox`; do not delete it unless you need a clean login. Firefox FAQ child copies run one at a time because one Firefox profile cannot be opened safely by parallel processes.
+Windows Finalize Authoring runs login, review, and copy work in one Firefox window. Keep that window open until the hub completes. Its signed-in project profile is `.aem-firefox`; do not delete it unless you need a clean login.
 
 macOS defaults AEM work to Chromium. It keeps project browser data in `.aem-chrome` and attaches to that browser for AEM work.
 

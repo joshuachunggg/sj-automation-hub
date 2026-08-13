@@ -17,6 +17,7 @@ from openpyxl import load_workbook
 ROOT = Path(__file__).resolve().parent
 NODE_COPY = ROOT / "aem_sim_copy_child.mjs"
 NODE_AUDIT = ROOT / "aem_faq_audit_page.mjs"
+NODE_FIREFOX_FINALIZE = ROOT / "aem_firefox_finalize.mjs"
 SHEET_HOSTS = {
     "Global": "https://p6spp-ap-author.samsung.com",
     "Europe": "https://p6spp-eu-author.samsung.com",
@@ -95,6 +96,11 @@ def configure_output():
 def run_all(wb, args):
     browser = getattr(args, "browser", "chromium")
     user_data_dir = getattr(args, "user_data_dir", None)
+    bridge = FirefoxBridge(user_data_dir) if browser == "firefox" else None
+    if bridge:
+        bridge.start()
+        print("SERVER SETUP READY", flush=True)
+        input("Press Enter after AEM Support is open for Global, Europe, and America: ")
     parents = []
     children = []
     for ws in wb.worksheets:
@@ -118,7 +124,7 @@ def run_all(wb, args):
         print(f"PROGRESS parent {index}/{len(parents)} {ws.title}/{site}", flush=True)
         try:
             link = editor_url(host_for(ws, ws.title), site, base_path(ws), ws.cell(13, col).value)
-            audit = audit_page(host_for(ws, ws.title), article_path(ws, col), link if args.review and not ws.cell(3, col).value else "", browser, user_data_dir)
+            audit = audit_page(host_for(ws, ws.title), article_path(ws, col), link if args.review and not ws.cell(3, col).value else "", browser, user_data_dir, bridge)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             findings += 1
             if isinstance(error, subprocess.TimeoutExpired):
@@ -149,7 +155,7 @@ def run_all(wb, args):
                 print(f"COPY SKIP {ws.title}/{parent} -> {child}: parent is not row-3 approved", flush=True)
                 continue
             print(f"PROGRESS copy {index}/{len(children)} {ws.title}/{parent} -> {child}", flush=True)
-            copy_jobs[executor.submit(copy_child, ws, ws.title, parent_col, child_col, browser, user_data_dir)] = (ws, child_col, parent, child)
+            copy_jobs[executor.submit(copy_child, ws, ws.title, parent_col, child_col, browser, user_data_dir, bridge)] = (ws, child_col, parent, child)
 
         for future in as_completed(copy_jobs):
             ws, child_col, parent, child = copy_jobs[future]
@@ -162,6 +168,8 @@ def run_all(wb, args):
             copied += 1
             wb.save(args.workbook)
             print(f"COPY DONE {ws.title}/{parent} -> {child}", flush=True)
+    if bridge:
+        bridge.close()
     print(f"SUMMARY parents={len(parents)} findings={findings} children={len(children)} copied={copied}", flush=True)
 
 
@@ -183,7 +191,9 @@ def review_answer(value):
     return choice.lower() == "y", note.strip()
 
 
-def audit_page(host, path, editor_link="", browser="chromium", user_data_dir=None):
+def audit_page(host, path, editor_link="", browser="chromium", user_data_dir=None, bridge=None):
+    if bridge:
+        return bridge.request("audit", host=host, path=path, editorUrl=editor_link)
     cmd = ["node", str(NODE_AUDIT), "--host", host, "--path", path]
     if editor_link:
         cmd += ["--editor-url", editor_link]
@@ -280,10 +290,12 @@ def article_path(ws, col):
     return f"/content/samsung/{ws.cell(8, col).value}{base_path(ws)}{ws.cell(13, col).value}"
 
 
-def copy_child(ws, sheet, parent, target, browser="chromium", user_data_dir=None):
+def copy_child(ws, sheet, parent, target, browser="chromium", user_data_dir=None, bridge=None):
     host = host_for(ws, sheet)
     source_path = article_path(ws, parent).removeprefix("/content/samsung") + "/"
     destination_path = article_path(ws, target).removeprefix("/content/samsung") + "/"
+    if bridge:
+        return bridge.request("copy", host=host, sourcePath=source_path, destinationPath=destination_path, siteCode=ws.cell(8, target).value, slug=ws.cell(13, target).value)
     cmd = [
         "node", str(NODE_COPY), "--host", host,
         "--source-path", source_path, "--destination-path", destination_path,
@@ -295,6 +307,40 @@ def copy_child(ws, sheet, parent, target, browser="chromium", user_data_dir=None
         cmd += ["--user-data-dir", user_data_dir]
     cmd.append("--apply")
     subprocess.run(cmd, check=True)
+
+
+class FirefoxBridge:
+    def __init__(self, profile):
+        self.profile = profile
+        self.process = None
+
+    def start(self):
+        self.process = subprocess.Popen(
+            ["node", str(NODE_FIREFOX_FINALIZE), self.profile], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
+        )
+        response = self._read()
+        if not response.get("ready"):
+            raise RuntimeError(response.get("error", "Firefox login failed"))
+
+    def request(self, action, **values):
+        self.process.stdin.write(json.dumps({"action": action, **values}) + "\n")
+        self.process.stdin.flush()
+        response = self._read()
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error", "Firefox request failed"))
+        return response.get("result")
+
+    def close(self):
+        if self.process and self.process.poll() is None:
+            self.process.stdin.write('{"action":"close"}\n')
+            self.process.stdin.flush()
+            self.process.wait(timeout=10)
+
+    def _read(self):
+        line = self.process.stdout.readline()
+        if not line:
+            raise RuntimeError("Firefox session ended unexpectedly")
+        return json.loads(line)
 
 
 def print_plan(wb):
