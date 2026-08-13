@@ -4,6 +4,7 @@ import { openAemBrowser } from './aem_browser.mjs';
 const profile = process.argv[2];
 const { context, close } = await openAemBrowser({ browserName: 'firefox', userDataDir: profile });
 const login = await context.newPage();
+let reviewPage;
 await login.goto(process.env.WMC_LOGIN_URL || 'https://wds.samsung.com/wds/sso/login/forwardLogin.do', { waitUntil: 'domcontentloaded' });
 reply({ ready: true });
 
@@ -23,15 +24,18 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
 function reply(value) { process.stdout.write(`${JSON.stringify(value)}\n`); }
 
 async function audit({ host, path, editorUrl }) {
-  const page = await context.newPage();
+  const page = editorUrl ? (!reviewPage || reviewPage.isClosed() ? reviewPage = await context.newPage() : reviewPage) : await context.newPage();
   try {
     const response = await page.goto(`${host}${path}.infinity.json`, { waitUntil: 'domcontentloaded' });
     if (!response?.ok()) throw new Error(`Could not read ${path}: ${response?.status() || 'no response'}`);
     const grid = JSON.parse(await page.locator('body').innerText())?.['jcr:content']?.root?.responsivegrid?.responsivegrid;
     if (!grid) throw new Error(`No FAQ component grid at ${path}`);
-    if (editorUrl) await page.goto(editorUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    if (editorUrl) {
+      await page.goto(editorUrl, { waitUntil: 'domcontentloaded' });
+      await page.bringToFront();
+    }
     return { components: Object.values(grid).filter(node => node && typeof node === 'object' && node['sling:resourceType']).map(node => ({ type: node['sling:resourceType'], settings: settings(node), text: textValues(node) })) };
-  } finally { await page.close(); }
+  } finally { if (page !== reviewPage) await page.close(); }
 }
 
 async function copy({ host, sourcePath, destinationPath, siteCode, slug }) {
