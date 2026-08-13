@@ -71,6 +71,10 @@ class AemFaqQaTest(unittest.TestCase):
         ]}
         self.assertEqual(audit_findings(audit, baseline), [])
 
+    def test_audit_findings_flags_paragraph_in_co16_description(self):
+        audit = {"components": [{"type": "samsung/components/co16", "settings": {}, "text": [], "descriptions": ["<p>Not allowed</p>"]}]}
+        self.assertIn("component 1 CO16 description contains a <p> tag", audit_findings(audit, audit))
+
     def test_review_answer_keeps_a_skip_note(self):
         self.assertEqual(review_answer("y"), (True, ""))
         self.assertEqual(review_answer("n punctuation needs review"), (False, "punctuation needs review"))

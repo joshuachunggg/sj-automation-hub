@@ -253,6 +253,8 @@ def audit_findings(audit, baseline):
         if component["type"] == reference["type"] and component["settings"] != reference["settings"]:
             findings.append(f"component {index} settings differ from the sheet baseline")
         findings.extend(text_findings(component["text"]))
+        if re.search(r"(?:^|/)co16(?:/|$)", component["type"], re.I) and any(re.search(r"<p\b", text, re.I) for text in component.get("descriptions", [])):
+            findings.append(f"component {index} CO16 description contains a <p> tag")
     findings.extend(language_findings(components))
     return findings
 

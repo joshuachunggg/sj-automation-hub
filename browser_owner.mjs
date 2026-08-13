@@ -40,6 +40,7 @@ async function login() {
   if (await support.isVisible().catch(() => false)) return 'WMC home ready';
   for (let retry = 0; retry < 30; retry++) {
     if (await support.isVisible().catch(() => false)) return 'WMC home ready';
+    await waitForLoginModal();
     await home.getByRole('row', { name: 'To login, please click on' }).getByRole('link').click({ timeout: 1000 }).catch(() => {});
     await home.locator('#loginButton').click({ timeout: 1000 }).catch(() => {});
     const email = home.getByRole('textbox', { name: 'Login ID (e-mail)' });
@@ -54,6 +55,10 @@ async function login() {
   await support.waitFor({ timeout: 300000 });
   return 'WMC home ready';
 }
+async function waitForLoginModal() {
+  const modal = home.locator('[role="dialog"]:visible').first();
+  if (await modal.count()) await modal.waitFor({ state: 'hidden', timeout: 300000 });
+}
 async function audit({ host, path, editorUrl }) {
   const page = editorUrl ? (!reviewPage || reviewPage.isClosed() ? reviewPage = await openTab(context) : reviewPage) : await openTab(context);
   try {
@@ -63,7 +68,7 @@ async function audit({ host, path, editorUrl }) {
     const grid = JSON.parse(body)?.['jcr:content']?.root?.responsivegrid?.responsivegrid;
     if (!grid) throw new Error(`No FAQ component grid at ${path}`);
     if (editorUrl) await openEditor(editorUrl);
-    return { components: Object.values(grid).filter(x => x?.['sling:resourceType']).map(x => ({ type: x['sling:resourceType'], settings: x, text: [] })) };
+    return { components: Object.values(grid).filter(x => x?.['sling:resourceType']).map(x => ({ type: x['sling:resourceType'], settings: settings(x), text: textValues(x), descriptions: descriptionValues(x) })) };
   } finally { if (page !== reviewPage) await closeTab(context, page); }
 }
 async function copy({ host, sourcePath, destinationPath, siteCode, slug }) {
@@ -85,3 +90,17 @@ async function post(page, url, fields) {
   await page.goto(`${new URL(url).origin}/libs/granite/csrf/token.json`, { waitUntil: 'domcontentloaded' });
   await page.evaluate(async ({ url, fields }) => { const r = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: new URLSearchParams(fields) }); if (!r.ok) throw new Error(`${r.status} ${await r.text()}`); }, { url, fields });
 }
+function settings(value, key = '') {
+  if (Array.isArray(value)) return value.map(item => settings(item, key));
+  if (!value || typeof value !== 'object') return textKey(key) || key.startsWith('jcr:') ? undefined : value;
+  const direct = {}, children = [];
+  for (const [name, item] of Object.entries(value)) {
+    if (name.startsWith('jcr:') || textKey(name) || assetKey(name)) continue;
+    if (item && typeof item === 'object' && !Array.isArray(item)) children.push(settings(item, name)); else direct[name] = settings(item, name);
+  }
+  return children.length ? { ...direct, children } : direct;
+}
+function textValues(value, path = '') { if (Array.isArray(value)) return value.flatMap((item, index) => textValues(item, `${path}/${index}`)); if (!value || typeof value !== 'object') return textKey(path.split('/').pop()) && typeof value === 'string' ? [value] : []; return Object.entries(value).flatMap(([key, item]) => textValues(item, `${path}/${key}`)); }
+function descriptionValues(value) { if (Array.isArray(value)) return value.flatMap(descriptionValues); if (!value || typeof value !== 'object') return []; return Object.entries(value).flatMap(([key, item]) => key.toLowerCase() === 'description' && typeof item === 'string' ? [item] : descriptionValues(item)); }
+function textKey(key = '') { return /(?:description|headline|title|text|label|caption|alternative|alt)$/i.test(key); }
+function assetKey(key = '') { return /(?:image(?:ref|reference)?|fileReference)$/i.test(key); }
