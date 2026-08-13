@@ -138,7 +138,15 @@ async function live({ url }) {
   try { const response = await page.goto(url.startsWith('http') ? url : `https://${url}`, { timeout: 30000 }); return response?.status() === 200; }
   catch { return false; } finally { await closeTab(context, page); }
 }
-async function dismissNotice(page) { await page.getByRole('button', { name: /close/i }).click({ timeout: 1000 }).catch(() => {}); }
+async function dismissNotice(page) {
+  const dismissed = await page.evaluate(() => {
+    const button = document.querySelector('#hideTodayBtn, #closeBtn');
+    if (!button) return false;
+    button.click();
+    return true;
+  });
+  if (dismissed) await page.locator('#noticeOverlay').waitFor({ state: 'hidden', timeout: 10000 });
+}
 async function ensureJiraLogin(page) {
   const tickets = page.getByRole('link', { name: 'tickets Assigned to Me' });
   if (await tickets.isVisible().catch(() => false)) return tickets;
