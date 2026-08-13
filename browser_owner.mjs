@@ -129,7 +129,9 @@ async function publishOnce({ siteCode, slug }) {
     for (let i = 0; i < await rows.count(); i++) if (exactSlug(await rows.nth(i).innerText(), slug)) matches.push(rows.nth(i));
     if (!matches.length) return 'not_found';
     if (matches.length !== 1) return 'ambiguous';
-    await uiClick(matches[0]); await page.waitForLoadState('networkidle');
+    const issueUrl = await matches[0].getAttribute('href');
+    if (!issueUrl) throw new Error(`Jira search result for ${siteCode} has no issue URL.`);
+    await page.goto(new URL(issueUrl, page.url()).href, { waitUntil: 'domcontentloaded' });
     if (await isLive(page)) return 'done';
     if (!await production(page).isVisible().catch(() => false)) {
       await uiClick(page.getByRole('button', { name: 'New Request' }));
@@ -143,9 +145,15 @@ async function publishOnce({ siteCode, slug }) {
   } finally { await closeTab(context, page); }
 }
 async function live({ url }) {
-  const page = await openTab(context);
-  try { const response = await page.goto(url.startsWith('http') ? url : `https://${url}`, { timeout: 30000 }); return response?.status() === 200; }
-  catch { return false; } finally { await closeTab(context, page); }
+  const target = url.startsWith('http') ? url : `https://${url}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try { return (await fetch(target, { signal: controller.signal })).status === 200; }
+  catch {
+    const page = await openTab(context);
+    try { return (await page.goto(target, { timeout: 30000 }))?.status() === 200; }
+    catch { return false; } finally { await closeTab(context, page); }
+  } finally { clearTimeout(timeout); }
 }
 async function dismissNotice(page) {
   const dismissed = await page.evaluate(() => {

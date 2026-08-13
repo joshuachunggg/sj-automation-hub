@@ -18,8 +18,10 @@ class BrowserOwnerTest(unittest.TestCase):
         self.assertIn("#issue-workflow-transition-submit", source)
         self.assertIn("fetch(form.action", source)
 
-    def test_publisher_clicks_do_not_wait_for_navigation(self):
-        self.assertIn("locator.click({ noWaitAfter: true })", Path("browser_owner.mjs").read_text())
+    def test_publisher_uses_direct_issue_and_live_requests(self):
+        source = Path("browser_owner.mjs").read_text()
+        self.assertIn("page.goto(new URL(issueUrl, page.url()).href", source)
+        self.assertIn("fetch(target, { signal: controller.signal })", source)
 
     def test_publisher_retries_transient_browser_failures(self):
         source = Path("browser_owner.mjs").read_text()
