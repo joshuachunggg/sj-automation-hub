@@ -5,17 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import main
-from main import LiveMonitor
+from main import LiveMonitor, skipped_countries
 from openpyxl import Workbook
 from sheet_io import find_columns
 
 
 class LiveMonitorTest(unittest.TestCase):
-    def test_open_tab_reuses_firefox_start_tab(self):
-        blank = SimpleNamespace(url="about:blank")
-        context = SimpleNamespace(pages=[blank])
-        self.assertIs(asyncio.run(main._open_tab(context)), blank)
-
     def test_releases_worker_slot(self):
         log = io.StringIO()
         monitor = LiveMonitor(2, log)
@@ -33,9 +28,9 @@ class LiveMonitorTest(unittest.TestCase):
 
         col = SimpleNamespace(sheet_name="Europe", col_idx=22, site_code="se", editor_url="https://example.test/editor.html/content/samsung/se/page")
         with patch.object(main, "FILE_PATH", "test.xlsx", create=True), \
-             patch.object(main, "check_live_async", AsyncMock(return_value=True)), \
+             patch.object(main, "browser_request", return_value=True), \
              patch.object(main, "write_live_url") as write:
-            result = asyncio.run(main._wait_for_live(None, col, asyncio.Semaphore(1), Monitor(), object()))
+            result = asyncio.run(main._wait_for_live_in_shared_firefox(col, asyncio.Semaphore(1), Monitor(), object()))
         self.assertTrue(result[2])
         write.assert_called_once()
 
@@ -49,7 +44,19 @@ class LiveMonitorTest(unittest.TestCase):
         ws.cell(13, 2, "page")
         self.assertEqual([c.site_code for c in find_columns(wb, pending_only=False)], ["sg"])
 
-    def test_validation_uses_parallel_workers(self):
+    def test_skip_countries_accepts_commas_repeats_and_case(self):
+        self.assertEqual(skipped_countries(["UK, ca", "SG"]), {"uk", "ca", "sg"})
+
+    def test_publish_uses_browser_owner_not_a_new_firefox(self):
+        self.assertNotIn("launch_persistent_context", __import__("inspect").getsource(main.run_publish))
+
+    def test_monitor_marks_skipped_countries_as_not_processed(self):
+        monitor = LiveMonitor(1, io.StringIO())
+        with patch("builtins.print") as print_:
+            monitor.begin([SimpleNamespace(site_code="sg")], "publish", [SimpleNamespace(site_code="uk")])
+        self.assertIn('"skipped": ["uk"]', print_.call_args.args[0])
+
+    def test_validation_uses_parallel_shared_browser_requests(self):
         class Monitor:
             def __init__(self): self.slot = 0
             def claim(self, col): self.slot += 1; return self.slot
@@ -57,21 +64,21 @@ class LiveMonitorTest(unittest.TestCase):
             def status(self, slot, status): pass
 
         active = peak = 0
-        async def check(context, url, timeout):
+        def check(action, url):
             nonlocal active, peak
             active += 1
             peak = max(peak, active)
-            await asyncio.sleep(0)
+            __import__("time").sleep(.01)
             active -= 1
             return True
 
         columns = [SimpleNamespace(sheet_name="Global", col_idx=i, site_code=str(i), editor_url=f"https://example.test/editor.html/content/samsung/{i}/page") for i in (2, 3)]
         with patch.object(main, "FILE_PATH", "test.xlsx", create=True), \
-             patch.object(main, "check_live_async", check), \
+             patch.object(main, "browser_request", check), \
              patch.object(main, "write_live_url"):
             async def run():
                 semaphore = asyncio.Semaphore(2)
-                await asyncio.gather(*(main._validate_one(None, col, semaphore, Monitor(), object(), lambda _: None) for col in columns))
+                await asyncio.gather(*(main._validate_one(col, semaphore, Monitor(), object(), lambda _: None) for col in columns))
             asyncio.run(run())
         self.assertEqual(peak, 2)
 

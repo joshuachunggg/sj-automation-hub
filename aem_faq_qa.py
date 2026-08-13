@@ -37,6 +37,9 @@ def main():
     if args.plan:
         print_plan(wb)
         return
+    if args.retry_failed:
+        retry_failed_copies(wb, args)
+        return
     if args.all:
         run_all(wb, args)
         return
@@ -79,6 +82,7 @@ def parse_args():
     parser.add_argument("--workbook", type=Path, required=True)
     parser.add_argument("--plan", action="store_true", help="print parent/child status from the workbook")
     parser.add_argument("--all", action="store_true", help="audit all parents; with --apply copy children of row-3-approved parents")
+    parser.add_argument("--retry-failed", action="store_true", help="retry only approved children with no row-3 editor link")
     parser.add_argument("--review", action="store_true", help="pause for a row-3 approval decision after each unapproved parent audit")
     parser.add_argument("--copy-workers", type=int, default=3, help="concurrent child copies (default: 3)")
     parser.add_argument("--browser", choices=("firefox",), default="firefox")
@@ -88,7 +92,7 @@ def parse_args():
     parser.add_argument("--detail-url", help="optional SIM detail URL fallback for an ambiguous inbox search")
     parser.add_argument("--apply", action="store_true", help="actually call SIM copy and write row 3")
     args = parser.parse_args()
-    if not args.plan and not args.all and not all([args.sheet, args.child_site]):
+    if not args.plan and not args.all and not args.retry_failed and not all([args.sheet, args.child_site]):
         parser.error("--sheet and --child-site are required unless --plan is used")
     return args
 
@@ -208,6 +212,52 @@ def run_all(wb, args):
     if bridge:
         bridge.close()
     print(f"SUMMARY parents={len(parents)} findings={findings} children={len(children)} copied={copied}", flush=True)
+
+
+def retry_failed_copies(wb, args):
+    children = []
+    for ws in wb.worksheets:
+        yellow_parent = None
+        for col in range(2, ws.max_column + 1):
+            if not ws.cell(8, col).value:
+                continue
+            kind = column_kind(ws.cell(11, col))
+            if kind == "parent-with-children":
+                yellow_parent = col
+            elif kind == "child" and yellow_parent and ws.cell(3, yellow_parent).value and not ws.cell(3, col).value:
+                children.append((ws, col, yellow_parent))
+    wait_for_workbook(args.workbook)
+    bridge = FirefoxBridge(getattr(args, "user_data_dir", None))
+    bridge.start()
+    ui("start", parents=0, children=len(children), child_sites=[ws.cell(8, col).value for ws, col, _ in children])
+    copied = 0
+    for index, (ws, child_col, parent_col) in enumerate(children, 1):
+        child, parent = ws.cell(8, child_col).value, ws.cell(8, parent_col).value
+        print(f"PROGRESS retry {index}/{len(children)} {ws.title}/{parent} -> {child}", flush=True)
+        ui("child", index=index, total=len(children), sheet=ws.title, site=child, status="copying")
+        if child_exists(ws, ws.title, child_col, bridge):
+            ws.cell(3, child_col).value = editor_url(host_for(ws, ws.title), child, base_path(ws), ws.cell(13, child_col).value)
+            save_workbook(wb, args.workbook)
+            print(f"COPY ALREADY DONE {ws.title}/{parent} -> {child}", flush=True)
+            ui("child", sheet=ws.title, site=child, status="copied")
+            continue
+        try:
+            copy_child(ws, ws.title, parent_col, child_col, "firefox", getattr(args, "user_data_dir", None), bridge)
+        except (subprocess.CalledProcessError, RuntimeError) as error:
+            print(f"COPY ERROR {ws.title}/{parent} -> {child}: {error}", flush=True)
+            ui("child", sheet=ws.title, site=child, status="error", error=str(error))
+            continue
+        ws.cell(3, child_col).value = editor_url(host_for(ws, ws.title), child, base_path(ws), ws.cell(13, child_col).value)
+        save_workbook(wb, args.workbook)
+        copied += 1
+        print(f"COPY DONE {ws.title}/{parent} -> {child}", flush=True)
+        ui("child", sheet=ws.title, site=child, status="copied")
+    bridge.close()
+    print(f"SUMMARY retry children={len(children)} copied={copied}", flush=True)
+
+
+def child_exists(ws, sheet, child_col, bridge):
+    return bridge.request("exists", host=host_for(ws, sheet), path=article_path(ws, child_col))
 
 
 def review_parent(wb, workbook_path, ws, col):

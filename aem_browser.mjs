@@ -12,8 +12,18 @@ export async function openAemBrowser({ userDataDir } = {}) {
   return { context, close: () => context.close() };
 }
 
-export async function openTab(context) {
-  return context.pages().find((page) => page.url() === 'about:blank') || context.newPage();
+let opening = Promise.resolve();
+
+export function openTab(context) {
+  const open = opening.then(async () => {
+    const pages = context.pages();
+    if (pages.length === 1 && pages[0].url() === 'about:blank') return pages[0];
+    const opened = context.waitForEvent('page');
+    await pages[0].evaluate(() => window.open('about:blank', '_blank'));
+    return opened;
+  });
+  opening = open.catch(() => {});
+  return open;
 }
 
 export async function closeTab(context, page) {

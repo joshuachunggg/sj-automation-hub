@@ -10,6 +10,7 @@ class BrowserOwnerTest(unittest.TestCase):
         conn.makefile.return_value.readline.return_value = '{"ok": true, "result": true}\n'
         with patch("browser_owner.socket.create_connection", side_effect=[OSError, conn]), patch("browser_owner.time.sleep"):
             self.assertTrue(browser_owner.request("done"))
+        conn.settimeout.assert_called_once_with(300)
 
 
 if __name__ == "__main__":

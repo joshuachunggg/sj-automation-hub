@@ -190,7 +190,7 @@ async function resolveComponentsPath(page, root, requestedRelPath, { requireJson
     throw new Error(`Configured container path does not exist: ${requestedPath}`);
   }
 
-  await page.waitForSelector('[data-path$="/*"]', { timeout: 8000 }).catch(() => {});
+  await page.waitForSelector('[data-path$="/*"]', { timeout: 20000 }).catch(() => {});
   const candidates = await page.evaluate((root) => {
     return [...document.querySelectorAll('[data-path$="/*"]')]
       .map((element) => element.getAttribute('data-path').replace(/\/\*$/, ''))
@@ -211,7 +211,7 @@ async function resolveComponentsPath(page, root, requestedRelPath, { requireJson
 }
 
 async function overlayPathExists(page, path) {
-  await page.waitForSelector('[data-path$="/*"]', { timeout: 8000 }).catch(() => {});
+  await page.waitForSelector('[data-path$="/*"]', { timeout: 20000 }).catch(() => {});
   return await page.evaluate((path) => {
     return [...document.querySelectorAll('[data-path$="/*"]')]
       .some((element) => element.getAttribute('data-path') === `${path}/*`);

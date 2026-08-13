@@ -5,8 +5,9 @@ import { openTab, closeTab } from './aem_browser.mjs';
 
 const profile = process.env.AEM_PROFILE || '.firefox-profile';
 const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).map(line => line.split(/=(.*)/s)).filter(([k]) => k));
-const context = await firefox.launchPersistentContext(profile, { headless: false, args: ['--allow-downgrade'] });
+const context = await firefox.launchPersistentContext(profile, { headless: false, args: ['--allow-downgrade'], firefoxUserPrefs: { 'browser.link.open_newwindow': 3, 'browser.link.open_newwindow.restriction': 0 } });
 let home = context.pages()[0] || await context.newPage(), reviewPage;
+let finishLogin = () => {};
 const server = net.createServer(socket => {
   let text = '';
   socket.on('data', async chunk => {
@@ -22,34 +23,56 @@ server.listen(8766, '127.0.0.1');
 
 async function handle(request) {
   if (request.action === 'login') return login();
-  if (request.action === 'done') return true;
+  if (request.action === 'done') return finishLogin();
   if (request.action === 'open') return openEditor(request.url);
   if (request.action === 'audit') return audit(request);
   if (request.action === 'copy') return copy(request);
+  if (request.action === 'exists') return exists(request);
+  if (request.action === 'publish') return publish(request);
+  if (request.action === 'live') return live(request);
   throw new Error(`Unknown browser action: ${request.action}`);
 }
 async function openEditor(url) {
-  reviewPage = await context.newPage();
+  reviewPage = await openTab(context);
   await reviewPage.goto(url, { waitUntil: 'domcontentloaded' });
   await reviewPage.bringToFront();
   return true;
 }
 async function login() {
+  let release;
+  const done = new Promise(resolve => release = resolve);
+  finishLogin = () => release('done');
   await home.goto('https://wds.samsung.com/wds/sso/login/forwardLogin.do', { waitUntil: 'domcontentloaded' });
   const support = home.getByRole('link', { name: 'Support' }).first();
-  if (await support.isVisible().catch(() => false)) return 'WMC home ready';
-  await home.locator('div').filter({ hasText: 'close' }).nth(2).click({ timeout: 2000 }).catch(() => {});
   const email = home.getByRole('textbox', { name: 'Login ID (e-mail)' });
-  if (!await email.isVisible().catch(() => false)) {
-    await home.getByRole('row', { name: 'To login, please click on' }).getByRole('link').click();
-    await home.locator('#loginButton').click();
-  }
-  await email.waitFor({ state: 'visible', timeout: 30000 });
-  await email.fill(process.env.WMC_USERNAME || env.WMC_USERNAME);
-  await home.getByRole('textbox', { name: 'Password' }).fill(process.env.WMC_PASSWORD || env.WMC_PASSWORD);
-  await home.getByRole('button', { name: 'Sign In', exact: true }).click();
-  await support.waitFor({ timeout: 300000 });
-  return 'WMC home ready';
+  try {
+    let state = await loginState(support, email, done, 30000);
+    if (!state) {
+      await home.getByRole('row', { name: 'To login, please click on' }).getByRole('link').click();
+      await home.locator('#loginButton').click();
+      state = await loginState(support, email, done, 30000);
+      if (!state) throw new Error('Login page did not become ready within 30s.');
+    }
+    if (state !== 'form') return 'WMC home ready';
+    await email.fill(process.env.WMC_USERNAME || env.WMC_USERNAME);
+    await home.getByRole('textbox', { name: 'Password' }).fill(process.env.WMC_PASSWORD || env.WMC_PASSWORD);
+    await home.getByRole('button', { name: 'Sign In', exact: true }).click();
+    if (!await loginState(support, email, done, 300000)) throw new Error('Login did not finish within 300s.');
+    return 'WMC home ready';
+  } finally { finishLogin = () => {}; }
+}
+async function loginState(support, email, done, timeout) {
+  const ready = await Promise.race([
+    support.waitFor({ state: 'visible', timeout }).then(() => 'home'),
+    email.waitFor({ state: 'visible', timeout }).then(() => 'form'),
+    done,
+  ]).catch(() => null);
+  return ready;
+}
+async function exists({ host, path }) {
+  const page = await openTab(context);
+  try { return (await page.goto(`${host}${path}.infinity.json`, { waitUntil: 'domcontentloaded' }))?.ok() ?? false; }
+  finally { await closeTab(context, page); }
 }
 async function audit({ host, path, editorUrl }) {
   const page = editorUrl ? (!reviewPage || reviewPage.isClosed() ? reviewPage = await openTab(context) : reviewPage) : await openTab(context);
@@ -78,6 +101,65 @@ async function copy({ host, sourcePath, destinationPath, siteCode, slug }) {
     return true;
   } finally { await closeTab(context, page); }
 }
+async function publish({ siteCode, slug }) {
+  const page = await openTab(context);
+  try {
+    await page.goto('https://jira.secext.samsung.net/', { waitUntil: 'domcontentloaded' });
+    await dismissNotice(page);
+    await (await ensureJiraLogin(page)).click();
+    const search = page.getByRole('textbox', { name: 'Contains text' });
+    await search.fill(`${siteCode} ${slug}`);
+    await search.press('Enter');
+    await page.waitForLoadState('networkidle');
+    let rows = page.getByRole('link', { name: new RegExp(`^${escapeRe(siteCode)}\\b`, 'i') });
+    if (!await rows.count()) {
+      await search.fill(slug); await search.press('Enter'); await page.waitForLoadState('networkidle');
+      rows = page.getByRole('link', { name: new RegExp(`\\[${escapeRe(siteCode)}\\]|\\b${escapeRe(siteCode)}\\b`, 'i') });
+    }
+    const matches = [];
+    for (let i = 0; i < await rows.count(); i++) if (exactSlug(await rows.nth(i).innerText(), slug)) matches.push(rows.nth(i));
+    if (!matches.length) return 'not_found';
+    if (matches.length !== 1) return 'ambiguous';
+    await matches[0].click(); await page.waitForLoadState('networkidle');
+    if (await isLive(page)) return 'done';
+    if (!await production(page).isVisible().catch(() => false)) {
+      await page.getByRole('button', { name: 'New Request' }).click();
+      await page.getByRole('menuitem').filter({ hasText: 'Start AEM Workflow' }).click();
+      await confirm(page, 'Start AEM Workflow');
+    }
+    await production(page).click();
+    await page.getByRole('menuitem').filter({ hasText: 'Go To Live' }).click();
+    await confirm(page, 'Go To Live', () => isLive(page));
+    return 'done';
+  } finally { await closeTab(context, page); }
+}
+async function live({ url }) {
+  const page = await openTab(context);
+  try { const response = await page.goto(url.startsWith('http') ? url : `https://${url}`, { timeout: 30000 }); return response?.status() === 200; }
+  catch { return false; } finally { await closeTab(context, page); }
+}
+async function dismissNotice(page) { await page.getByRole('button', { name: /close/i }).click({ timeout: 1000 }).catch(() => {}); }
+async function ensureJiraLogin(page) {
+  const tickets = page.getByRole('link', { name: 'tickets Assigned to Me' });
+  if (await tickets.isVisible().catch(() => false)) return tickets;
+  if (await tickets.waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false)) return tickets;
+  if (await page.getByText('Log in', { exact: true }).isVisible().catch(() => false)) throw new Error('Jira session expired in the shared Firefox session. Use Sign in, then retry.');
+  throw new Error('Jira did not finish loading its ticket navigation within 30 seconds.');
+}
+function production(page) { return page.locator('#opsbar-transitions_more').filter({ hasText: /\bPRODUCTION\b/i }); }
+async function isLive(page) { const label = page.locator('#opsbar-transitions_more .dropdown-text'); return await label.isVisible().catch(() => false) && (await label.innerText()).trim().toUpperCase() === 'LIVE'; }
+async function confirm(page, name, success = null) {
+  const button = page.getByRole('button', { name, exact: true }), heading = page.getByRole('heading', { name });
+  await button.waitFor({ state: 'visible', timeout: 20000 });
+  for (let i = 0; i < 6; i++) {
+    await button.click().catch(() => {});
+    if (await heading.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true).catch(() => false)) return;
+    if (success && i >= 2 && await success()) return;
+  }
+  if (!success || !await success()) throw new Error(`Clicked '${name}' 6 times, but its modal never closed.`);
+}
+function escapeRe(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function exactSlug(text, slug) { return new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(slug)}($|[^A-Za-z0-9_-])`).test(text); }
 async function post(page, url, fields) {
   await page.goto(`${new URL(url).origin}/libs/granite/csrf/token.json`, { waitUntil: 'domcontentloaded' });
   await page.evaluate(async ({ url, fields }) => { const r = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: new URLSearchParams(fields) }); if (!r.ok) throw new Error(`${r.status} ${await r.text()}`); }, { url, fields });
