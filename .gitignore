@@ -6,5 +6,6 @@ node_modules/
 .venv/
 .env
 .aem-chrome/
+.aem-firefox/
 *.session.json
 session.json

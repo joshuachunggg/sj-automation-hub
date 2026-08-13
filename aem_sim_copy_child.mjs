@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { chromium } from 'playwright-core';
+import { openAemBrowser } from './aem_browser.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const apply = args.has('apply');
@@ -15,8 +15,11 @@ async function main() {
   const destinationPath = required('destination-path');
   const siteCode = required('site-code');
 
-  const browser = await chromium.connectOverCDP(process.env.CDP || 'http://127.0.0.1:9223');
-  const context = browser.contexts()[0] || await browser.newContext();
+  const { context, close } = await openAemBrowser({
+    browserName: args.get('browser') || 'chromium',
+    cdp: process.env.CDP || 'http://127.0.0.1:9223',
+    userDataDir: args.get('user-data-dir'),
+  });
   const page = await context.newPage();
   try {
     const ids = args.get('content-id') && args.get('request-id')
@@ -44,7 +47,7 @@ async function main() {
     console.log('Done.');
   } finally {
     await page.close();
-    await browser.close();
+    await close();
   }
 }
 

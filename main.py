@@ -149,7 +149,7 @@ async def run_validate_only(pending, wb, log, workers, monitor, browser_name):
             await browser.close()
     still_not_live = [result for result in results if result]
     log("\n--- Validation Report ---")
-    log(f"Still not live ({len(still_not_live)}): {[c.url_title for c, _ in still_not_live]}")
+    log(f"Still not live ({len(still_not_live)}): {[f'{c.sheet_name}/{c.site_code}' for c, _ in still_not_live]}")
 
 
 async def _publish_one(context, col, semaphore, monitor):
@@ -242,7 +242,7 @@ async def run_publish(pending, wb, log, workers, monitor, browser_name):
     log("\n--- Report ---")
     log(f"Not found ({len(not_found)}): {[c.url_title for c in not_found]}")
     log(f"Ambiguous ({len(ambiguous)}): {[c.url_title for c in ambiguous]}")
-    log(f"Still not live ({len(still_not_live)}): {[c.url_title for c, _ in still_not_live]}")
+    log(f"Still not live ({len(still_not_live)}): {[f'{c.sheet_name}/{c.site_code}' for c, _ in still_not_live]}")
     log(f"Errored ({len(errored)}):")
     for c, err in errored:
         log(f"  {c.url_title} ({c.site_code}): {err}")

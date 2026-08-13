@@ -1,99 +1,73 @@
 # SJ Design Automation Hub
 
-A native terminal hub for AEM FAQ publishing, FAQ QA, and component copying. It runs on macOS and Windows, uses Google Chrome for AEM, and stores its Samsung WMC credentials only in your ignored local `.env`.
+Run all SJ Design Studio automations from one terminal menu:
 
-## First-time setup: macOS
+- **Live publishing** — publishes FAQ translations through Jira, then verifies live URLs.
+- **UK/CA Master** — copies missing AEM author-page components.
+- **Finalize Authoring** — audits parent FAQ pages, collects approval, then copies approved content to child locales.
 
-1. Install [Python 3](https://www.python.org/downloads/), [Node.js LTS](https://nodejs.org/), and Google Chrome.
+The hub defaults to Firefox on Windows and Chromium on macOS. Set `AEM_BROWSER=firefox` or `AEM_BROWSER=chromium` to override. Jira publishing always asks which browser to use.
 
-2. Open Terminal and run:
+## Setup
 
-   ```sh
-   python3 -m venv .venv
-   .venv/bin/pip install -r requirements.txt
-   .venv/bin/playwright install chromium firefox
-   npm install
-   ```
+Install Python 3.11+, Node.js LTS, and Git. Browser install comes from Playwright; Google Chrome is not required.
 
-3. Configure Samsung WMC login for FAQ QA:
-
-   ```sh
-   cp .env.example .env
-   ```
-
-   Fill `WMC_LOGIN_URL`, `WMC_USERNAME`, and `WMC_PASSWORD` in `.env`. This file is ignored by Git; do not share it.
-
-4. Start the hub:
-
-   ```sh
-   .venv/bin/python hub.py
-   ```
-
-## Later starts: macOS
-
-```sh
-cd /path/to/sj-automation-hub
-.venv/bin/python hub.py
-```
-
-## First-time setup: Windows
-
-1. Install [Python 3](https://www.python.org/downloads/windows/) (select **Add Python to PATH**), [Node.js LTS](https://nodejs.org/), and Google Chrome.
-
-2. Open PowerShell and clone the hub:
-
-   ```powershell
-   cd $HOME\Downloads
-   git clone https://github.com/joshuachunggg/sj-automation-hub.git
-   cd .\sj-automation-hub
-   ```
-
-   Without Git, download the repository ZIP from GitHub, extract it, and open PowerShell in the extracted folder.
-
-3. Install the project dependencies:
-
-   ```powershell
-   py -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   python -m pip install --upgrade pip
-   python -m pip install -r requirements.txt
-   python -m playwright install chromium firefox
-   npm install
-   ```
-
-   If activation is blocked, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` once in that PowerShell window, then activate again.
-
-4. Create `.env` by copying `.env.example`, then fill the three `WMC_…` values. Keep this file private.
-
-   ```powershell
-   Copy-Item .env.example .env
-   notepad .env
-   ```
-
-5. Start the hub:
-
-   ```powershell
-   .\.venv\Scripts\python.exe hub.py
-   ```
-
-## Later starts: Windows
+### Windows (PowerShell)
 
 ```powershell
-cd $HOME\Downloads\sj-automation-hub
+git clone https://github.com/joshuachunggg/sj-automation-hub.git
+cd .\sj-automation-hub
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m playwright install firefox chromium
+npm install
+Copy-Item .env.example .env
+notepad .env
 .\.venv\Scripts\python.exe hub.py
 ```
 
-## Automations
+If PowerShell blocks activation, do not activate it; commands above use virtual-environment Python directly.
 
-- **AEM FAQ Publishing:** choose Firefox or Chromium for Jira login, publishing, and live checks. Run its Jira login setup when the saved session expires.
-- **AEM Component Copier:** copy missing components between AEM author pages.
-- **AEM FAQ QA:** audit parent FAQs, collect your review decisions, then copy approved content to child locales.
+### macOS (Terminal)
 
-When FAQ QA starts, the hub reuses an active WMC Chrome session. If it is not already signed in, it opens WMC, fills the local credentials, pauses for your phone approval, and continues only after you press Enter. The browser remains visible throughout.
+```sh
+git clone https://github.com/joshuachunggg/sj-automation-hub.git
+cd sj-automation-hub
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m playwright install firefox chromium
+npm install
+cp .env.example .env
+open -e .env
+.venv/bin/python hub.py
+```
 
-## Troubleshooting
+Fill `WMC_LOGIN_URL`, `WMC_USERNAME`, and `WMC_PASSWORD` in `.env`. Never share or commit it.
 
-- **Chrome not found:** install Google Chrome, or set the `CHROME` environment variable to its executable.
-- **Workbook picker does not open:** paste the full `.xlsx` path into the hub.
-- **WMC login is missing:** create `.env` from `.env.example`; never commit it.
-- **Jira session expired:** select **AEM FAQ Publishing → Jira login setup**.
+## Run flow
+
+1. Start `hub.py` with virtual-environment Python above.
+2. Choose automation.
+3. Read on-screen confirmation; enter workbook path or select it.
+4. Sign in when browser opens; complete MFA if prompted.
+5. Keep browser open until hub says automation completed. Open **Logs** for full saved output.
+
+### Browser behavior
+
+Windows runs AEM work in Firefox by default. Its signed-in project profile is `.aem-firefox`; do not delete it unless you need a clean login. Firefox FAQ child copies run one at a time because one Firefox profile cannot be opened safely by parallel processes.
+
+macOS defaults AEM work to Chromium. It keeps project browser data in `.aem-chrome` and attaches to that browser for AEM work.
+
+To change default for one PowerShell session:
+
+```powershell
+$env:AEM_BROWSER = "chromium"
+.\.venv\Scripts\python.exe hub.py
+```
+
+## Recovery
+
+- **Browser does not open:** rerun `python -m playwright install firefox chromium` using virtual-environment Python.
+- **WMC login missing:** recreate `.env` from `.env.example` and fill all three values.
+- **Jira session expired:** choose **Live publishing**, then **Jira login setup**.
+- **Run failed:** choose **Logs**, open latest file, and keep workbook unchanged until cause is known.

@@ -1,7 +1,15 @@
-import { chromium } from 'playwright-core';
+import { openAemBrowser } from './aem_browser.mjs';
 
-const browser = await chromium.connectOverCDP(process.env.CDP || "http://127.0.0.1:9223");
-const context = browser.contexts()[0];
+const options = new Map(process.argv.slice(2).reduce((pairs, value, index, all) => {
+  if (value.startsWith('--')) pairs.push([value.slice(2), all[index + 1]]);
+  return pairs;
+}, []));
+const browserName = options.get('browser') || 'chromium';
+const { context, close } = await openAemBrowser({
+  browserName,
+  cdp: process.env.CDP || 'http://127.0.0.1:9223',
+  userDataDir: options.get('user-data-dir'),
+});
 const page = await context.newPage();
 
 for (const name of ["WMC_LOGIN_URL", "WMC_USERNAME", "WMC_PASSWORD"]) {
@@ -17,6 +25,7 @@ if (!wmcSession) {
 console.log("SERVER SETUP READY");
 await new Promise(resolve => process.stdin.once("data", resolve));
 console.log("AEM SESSION READY");
+if (browserName === 'firefox') await close();
 process.exit(0);
 
 async function waitForWmcState(page) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { chromium, firefox } from 'playwright-core';
+import { openAemBrowser } from './aem_browser.mjs';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 
@@ -38,7 +38,7 @@ async function main() {
   const targetRoot = pagePath(targetUrl);
   const requestedRelPath = options.get('container-path') || 'jcr:content/root/responsivegrid/responsivegrid';
 
-  const { browser, context } = await browserContext(browserName, cdp, userDataDir);
+  const { context, close } = await openAemBrowser({ browserName, cdp, userDataDir });
   const sourcePage = await getOrOpenPage(context, sourceUrl);
   await sourcePage.goto(sourceUrl, { waitUntil: 'domcontentloaded' });
   const targetPage = await getOrOpenPage(context, targetUrl);
@@ -73,7 +73,7 @@ async function main() {
   console.log(`${apply ? 'Will import' : 'Dry run'}: ${namesToCopy.join(', ') || '(nothing)'}`);
 
   if (!apply || namesToCopy.length === 0) {
-    await browser.close();
+    await close();
     return;
   }
 
@@ -99,7 +99,7 @@ async function main() {
   const missing = namesToCopy.filter((name) => !after[name] && !renderedNames.has(name));
   if (missing.length) throw new Error(`Import did not stick for: ${missing.join(', ')}`);
   console.log('Done. Reloaded target page and verified imported nodes exist.');
-  await browser.close();
+  await close();
 }
 
 function parseArgs(argv) {
@@ -136,18 +136,6 @@ Options:
                 component container under the page path
                 default: jcr:content/root/responsivegrid/responsivegrid`);
   process.exit(1);
-}
-
-async function browserContext(name, cdp, userDataDir) {
-  if (name === 'chromium') {
-    const browser = await chromium.connectOverCDP(cdp);
-    return { browser, context: browser.contexts()[0] || await browser.newContext() };
-  }
-  if (name === 'firefox') {
-    const context = await firefox.launchPersistentContext(userDataDir, { headless: false });
-    return { browser: { close: () => context.close() }, context };
-  }
-  throw new Error(`Unknown browser: ${name}`);
 }
 
 async function ask(prompt, question) {

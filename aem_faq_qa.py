@@ -75,6 +75,8 @@ def parse_args():
     parser.add_argument("--all", action="store_true", help="audit all parents; with --apply copy children of row-3-approved parents")
     parser.add_argument("--review", action="store_true", help="pause for a row-3 approval decision after each unapproved parent audit")
     parser.add_argument("--copy-workers", type=int, default=3, help="concurrent child copies (default: 3)")
+    parser.add_argument("--browser", choices=("chromium", "firefox"), default="chromium")
+    parser.add_argument("--user-data-dir", help="persistent Playwright profile for Firefox")
     parser.add_argument("--sheet", choices=sorted(SHEET_HOSTS), help="sheet containing the child")
     parser.add_argument("--child-site", help="AEM site code from row 8, e.g. africa_en")
     parser.add_argument("--detail-url", help="optional SIM detail URL fallback for an ambiguous inbox search")
@@ -91,6 +93,8 @@ def configure_output():
 
 
 def run_all(wb, args):
+    browser = getattr(args, "browser", "chromium")
+    user_data_dir = getattr(args, "user_data_dir", None)
     parents = []
     children = []
     for ws in wb.worksheets:
@@ -114,7 +118,7 @@ def run_all(wb, args):
         print(f"PROGRESS parent {index}/{len(parents)} {ws.title}/{site}", flush=True)
         try:
             link = editor_url(host_for(ws, ws.title), site, base_path(ws), ws.cell(13, col).value)
-            audit = audit_page(host_for(ws, ws.title), article_path(ws, col), link if args.review and not ws.cell(3, col).value else "")
+            audit = audit_page(host_for(ws, ws.title), article_path(ws, col), link if args.review and not ws.cell(3, col).value else "", browser, user_data_dir)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             findings += 1
             if isinstance(error, subprocess.TimeoutExpired):
@@ -133,7 +137,8 @@ def run_all(wb, args):
 
     copied = 0
     copy_jobs = {}
-    with ThreadPoolExecutor(max_workers=max(1, args.copy_workers)) as executor:
+    workers = 1 if browser == "firefox" else max(1, args.copy_workers)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         for index, (ws, child_col, parent_col) in enumerate(children, 1):
             child = ws.cell(8, child_col).value
             parent = ws.cell(8, parent_col).value if parent_col else "?"
@@ -144,7 +149,7 @@ def run_all(wb, args):
                 print(f"COPY SKIP {ws.title}/{parent} -> {child}: parent is not row-3 approved", flush=True)
                 continue
             print(f"PROGRESS copy {index}/{len(children)} {ws.title}/{parent} -> {child}", flush=True)
-            copy_jobs[executor.submit(copy_child, ws, ws.title, parent_col, child_col)] = (ws, child_col, parent, child)
+            copy_jobs[executor.submit(copy_child, ws, ws.title, parent_col, child_col, browser, user_data_dir)] = (ws, child_col, parent, child)
 
         for future in as_completed(copy_jobs):
             ws, child_col, parent, child = copy_jobs[future]
@@ -178,10 +183,14 @@ def review_answer(value):
     return choice.lower() == "y", note.strip()
 
 
-def audit_page(host, path, editor_link=""):
+def audit_page(host, path, editor_link="", browser="chromium", user_data_dir=None):
     cmd = ["node", str(NODE_AUDIT), "--host", host, "--path", path]
     if editor_link:
         cmd += ["--editor-url", editor_link]
+    if browser != "chromium":
+        cmd += ["--browser", browser]
+    if user_data_dir:
+        cmd += ["--user-data-dir", user_data_dir]
     result = subprocess.run(
         cmd,
         check=True, capture_output=True, text=True, encoding="utf-8", timeout=60,
@@ -271,7 +280,7 @@ def article_path(ws, col):
     return f"/content/samsung/{ws.cell(8, col).value}{base_path(ws)}{ws.cell(13, col).value}"
 
 
-def copy_child(ws, sheet, parent, target):
+def copy_child(ws, sheet, parent, target, browser="chromium", user_data_dir=None):
     host = host_for(ws, sheet)
     source_path = article_path(ws, parent).removeprefix("/content/samsung") + "/"
     destination_path = article_path(ws, target).removeprefix("/content/samsung") + "/"
@@ -280,6 +289,10 @@ def copy_child(ws, sheet, parent, target):
         "--source-path", source_path, "--destination-path", destination_path,
         "--site-code", ws.cell(8, target).value, "--slug", ws.cell(13, target).value,
     ]
+    if browser != "chromium":
+        cmd += ["--browser", browser]
+    if user_data_dir:
+        cmd += ["--user-data-dir", user_data_dir]
     cmd.append("--apply")
     subprocess.run(cmd, check=True)
 

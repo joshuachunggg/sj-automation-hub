@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { chromium } from 'playwright-core';
+import { openAemBrowser } from './aem_browser.mjs';
 
 const args = new Map(process.argv.slice(2).reduce((pairs, value, index, all) => {
   if (value.startsWith('--')) pairs.push([value.slice(2), all[index + 1]]);
@@ -14,8 +14,12 @@ main().catch((error) => {
 async function main() {
   const host = required('host');
   const path = required('path');
-  const browser = await chromium.connectOverCDP(process.env.CDP || 'http://127.0.0.1:9223');
-  const page = await reviewPage(browser.contexts()[0] || await browser.newContext());
+  const { context, close } = await openAemBrowser({
+    browserName: args.get('browser') || 'chromium',
+    cdp: process.env.CDP || 'http://127.0.0.1:9223',
+    userDataDir: args.get('user-data-dir'),
+  });
+  const page = await reviewPage(context);
   const response = await page.goto(`${host}${path}.infinity.json`, { waitUntil: 'domcontentloaded' });
   if (!response?.ok()) throw new Error(`Could not read ${path}: ${response?.status() || 'no response'}`);
   const pageJson = JSON.parse(await page.locator('body').innerText());
@@ -30,7 +34,7 @@ async function main() {
     }));
   if (args.get('editor-url')) await page.goto(args.get('editor-url'), { waitUntil: 'domcontentloaded' }).catch(() => {});
   console.log(JSON.stringify({ components }));
-  await browser.close();
+  await close();
 }
 
 async function reviewPage(context) {

@@ -14,6 +14,7 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent
 CHROME_PROFILE = ROOT / ".aem-chrome"
+FIREFOX_PROFILE = ROOT / ".aem-firefox"
 LOG_DIR = ROOT / "logs"
 ENV_FILE = ROOT / ".env"
 CDP_ENDPOINT = "http://127.0.0.1:9223"
@@ -72,18 +73,21 @@ def menu(title, items, back=True):
 
 
 def component_copier():
+    browser = aem_browser()
     if not panel(
         "AEM Component Copier",
         [
             "Copies missing AEM components from one author page to another.",
-            "Chrome will open with remote debugging enabled.",
-            "Log into AEM in that Chrome window, then return here.",
+            f"{browser.title()} will open for AEM login.",
+            "Log into AEM, then return here.",
             "The target container is locked to jcr:content/root/responsivegrid/responsivegrid by default.",
         ],
         wait=True,
     ):
         return
-    if not ensure_aem_chrome(["Log into AEM in the Chrome window that just opened.", "Return here when both source and target author domains are logged in."]):
+    if browser == "chromium" and not ensure_aem_chrome(["Log into AEM in the Chrome window that just opened.", "Return here when both source and target author domains are logged in."]):
+        return
+    if browser == "firefox" and not ensure_aem_firefox():
         return
     source = ask("Source/read page URL")
     if not source:
@@ -95,6 +99,7 @@ def component_copier():
     if yes is None:
         return
     args = ["node", str(ROOT / "copy-aem-components.mjs"), "--source", source, "--target", target]
+    args += aem_browser_args(browser)
     if yes:
         args.append("--yes")
     run_logged("AEM Component Copier", args)
@@ -149,11 +154,12 @@ def jira_login(browser="chromium"):
 
 
 def aem_faq_qa():
+    browser = aem_browser()
     if not panel(
         "AEM FAQ QA",
         [
             "Audits and reviews each unapproved parent, then copies approved children.",
-            "It reuses the existing dev Chrome session when available.",
+            f"Uses {browser.title()} for AEM.",
             "Log into Global, Europe, and America before starting the full pass.",
         ],
         wait=True,
@@ -176,11 +182,12 @@ def aem_faq_qa():
         args.append("--plan")
         return run_logged("AEM FAQ QA Plan", args)
 
-    if not ensure_faq_chrome():
+    if not ensure_faq_browser(browser):
         return
     if not confirm("Audit and review every unapproved parent, then copy approved children?", False):
         return
     args.append("--all")
+    args += aem_browser_args(browser)
     args += ["--review", "--apply"]
     run_logged("AEM FAQ QA Full Pass", args, review=True)
 
@@ -295,6 +302,27 @@ def ensure_faq_chrome():
     )
 
 
+def ensure_faq_browser(browser):
+    return ensure_faq_chrome() if browser == "chromium" else ensure_aem_firefox()
+
+
+def ensure_aem_firefox():
+    return run_logged(
+        "Samsung WMC Login",
+        ["node", str(ROOT / "aem_wmc_login.mjs"), *aem_browser_args("firefox")],
+        env=load_env(), mfa=True, return_on_success=True,
+    )
+
+
+def aem_browser():
+    default = "firefox" if platform.system() == "Windows" else "chromium"
+    return os.environ.get("AEM_BROWSER", default).lower() if os.environ.get("AEM_BROWSER", default).lower() in ("chromium", "firefox") else default
+
+
+def aem_browser_args(browser):
+    return ["--browser", browser, "--user-data-dir", str(FIREFOX_PROFILE)] if browser == "firefox" else []
+
+
 def dev_chrome_ready():
     return bool(dev_chrome_endpoint())
 
@@ -383,8 +411,9 @@ def wait_process(title, process, log_path, review=False, mfa=False, return_on_su
             if mfa and not handled_server_setup and "SERVER SETUP READY" in lines:
                 handled_server_setup = True
                 if server_setup_prompt(screen):
-                    process.terminate()
-                    return True
+                    process.stdin.write("\n")
+                    process.stdin.flush()
+                    continue
                 process.terminate()
                 return False
             if key == 3:

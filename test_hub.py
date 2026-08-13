@@ -31,6 +31,14 @@ class DotenvTest(unittest.TestCase):
             hub.activate_dev_chrome()
         self.assertEqual(run.call_args.args[0][:2], ["osascript", "-e"])
 
+    def test_windows_defaults_aem_to_firefox(self):
+        with patch.object(hub.platform, "system", return_value="Windows"), patch.dict("hub.os.environ", {}, clear=True):
+            self.assertEqual(hub.aem_browser(), "firefox")
+        self.assertEqual(
+            hub.aem_browser_args("firefox"),
+            ["--browser", "firefox", "--user-data-dir", str(hub.FIREFOX_PROFILE)],
+        )
+
     def test_faq_login_returns_directly_to_qa_after_success(self):
         with patch.object(hub, "use_existing_dev_chrome", return_value=False), \
              patch.object(hub, "dev_chrome_ready", return_value=True), \
