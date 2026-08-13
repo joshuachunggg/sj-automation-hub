@@ -18,6 +18,7 @@ class ExactSlugTest(unittest.TestCase):
         self.assertIn("issue_url = await ticket.get_attribute", source)
         self.assertIn("async with transition_lock:", source)
         self.assertNotIn("await search_box.click()", source)
+        self.assertIn('page.locator("a.issue-link")', inspect.getsource(__import__("jira_workflow")._find_ticket_link))
 
 
 class ProductionStateTest(unittest.IsolatedAsyncioTestCase):

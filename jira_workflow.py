@@ -101,20 +101,35 @@ async def _submit_and_wait_close(page, confirm_locator, modal_heading, descripti
     )
 
 
-async def _find_ticket_link(page, match_re):
-    """Scan current page for match_re, then page 2 if nothing on page 1. Returns (rows, count)."""
-    rows = page.get_by_role("link", name=match_re)
-    count = await rows.count()
+async def _find_ticket_link(page, col):
+    """Find exact site and slug among Jira's rendered issue links, then page 2."""
+    rows = page.locator("a.issue-link")
+    try:
+        await rows.first.wait_for(state="visible", timeout=15000)
+    except Exception:
+        pass
 
-    if count == 0:
+    async def matches():
+        found = []
+        site = re.compile(rf"(?:^|\[){re.escape(col.site_code)}(?:\]|\s)", re.IGNORECASE)
+        for index, text in enumerate(await rows.all_inner_texts()):
+            if site.search(text) and _has_exact_slug(text, col.url_title):
+                found.append(rows.nth(index))
+        return found
+
+    found = await matches()
+    if not found:
         next_page = page.locator('a[data-page="2"]')
-        if await next_page.is_visible():
+        try:
+            has_next = await next_page.is_visible()
+        except Exception:
+            has_next = False
+        if has_next:
             await next_page.click()
             await page.wait_for_load_state("networkidle")
-            rows = page.get_by_role("link", name=match_re)
-            count = await rows.count()
+            found = await matches()
 
-    return rows, count
+    return found
 
 
 async def _fallback_slug_search(page, col):
@@ -128,9 +143,7 @@ async def _fallback_slug_search(page, col):
     await search_box.press("Enter")
     await page.wait_for_load_state("networkidle")
 
-    code = re.escape(col.site_code)
-    match_re = re.compile(rf"\[{code}\]|\b{code}\b", re.IGNORECASE)
-    return await _find_ticket_link(page, match_re)
+    return await _find_ticket_link(page, col)
 
 
 def _has_exact_slug(text, slug):
@@ -167,22 +180,17 @@ async def process_column(page, col, transition_lock, status=lambda _: None):
     await search_box.press("Enter")
     await page.wait_for_load_state("networkidle")
 
-    match_re = re.compile(rf"^{re.escape(col.site_code)}\b")
-    rows, count = await _find_ticket_link(page, match_re)
+    tickets = await _find_ticket_link(page, col)
 
-    if count == 0:
+    if not tickets:
         # combined search found nothing - fall back to slug-only search + manual-style scan
-        rows, count = await _fallback_slug_search(page, col)
+        tickets = await _fallback_slug_search(page, col)
 
-    if count == 0:
+    if not tickets:
         return "not_found"
-    if count > 1:
-        rows = await _exact_slug_rows(rows, col)
-        if len(rows) != 1:
-            return "ambiguous"
-        ticket = rows[0]
-    else:
-        ticket = rows.first
+    if len(tickets) != 1:
+        return "ambiguous"
+    ticket = tickets[0]
 
     issue_url = await ticket.get_attribute("href")
     if not issue_url:
