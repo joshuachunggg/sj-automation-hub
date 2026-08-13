@@ -83,7 +83,7 @@ async function audit({ host, path, editorUrl }) {
     const grid = JSON.parse(body)?.['jcr:content']?.root?.responsivegrid?.responsivegrid;
     if (!grid) throw new Error(`No FAQ component grid at ${path}`);
     if (editorUrl) await openEditor(editorUrl);
-    return { components: Object.values(grid).filter(x => x?.['sling:resourceType']).map(x => ({ type: x['sling:resourceType'], settings: settings(x), text: textValues(x), descriptions: descriptionValues(x) })) };
+    return { components: Object.values(grid).filter(x => x?.['sling:resourceType']).map(x => ({ type: x['sling:resourceType'], settings: settings(x), text: textValues(x), descriptions: descriptionValues(x), discoverColumnNew: discoverColumnNewValues(x) })) };
   } finally { if (page !== reviewPage) await closeTab(context, page); }
 }
 async function copy({ host, sourcePath, destinationPath, siteCode, slug }) {
@@ -185,5 +185,7 @@ function settings(value, key = '') {
 }
 function textValues(value, path = '') { if (Array.isArray(value)) return value.flatMap((item, index) => textValues(item, `${path}/${index}`)); if (!value || typeof value !== 'object') return textKey(path.split('/').pop()) && typeof value === 'string' ? [value] : []; return Object.entries(value).flatMap(([key, item]) => textValues(item, `${path}/${key}`)); }
 function descriptionValues(value) { if (Array.isArray(value)) return value.flatMap(descriptionValues); if (!value || typeof value !== 'object') return []; return Object.entries(value).flatMap(([key, item]) => key.toLowerCase() === 'description' && typeof item === 'string' ? [item] : descriptionValues(item)); }
+function discoverColumnNewValues(value) { if (!value || typeof value !== 'object') return []; return Object.entries(value).flatMap(([key, item]) => /discover.*column.*new/i.test(key) ? strings(item) : discoverColumnNewValues(item)); }
+function strings(value) { return Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : typeof value === 'string' ? [value] : []; }
 function textKey(key = '') { return /(?:description|headline|title|text|label|caption|alternative|alt)$/i.test(key); }
 function assetKey(key = '') { return /(?:image(?:ref|reference)?|fileReference)$/i.test(key); }

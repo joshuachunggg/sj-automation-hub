@@ -27,6 +27,7 @@ async function main() {
       type: node['sling:resourceType'],
       settings: settings(node),
       text: textValues(node),
+      discoverColumnNew: discoverColumnNewValues(node),
     }));
   if (args.get('editor-url')) await page.goto(args.get('editor-url'), { waitUntil: 'domcontentloaded' }).catch(() => {});
   console.log(JSON.stringify({ components }));
@@ -59,6 +60,17 @@ function textValues(value, path = '') {
   if (Array.isArray(value)) return value.flatMap((item, index) => textValues(item, `${path}/${index}`));
   if (!value || typeof value !== 'object') return textKey(path.split('/').pop()) && typeof value === 'string' ? [value] : [];
   return Object.entries(value).flatMap(([key, item]) => textValues(item, `${path}/${key}`));
+}
+
+function discoverColumnNewValues(value) {
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, item]) => /discover.*column.*new/i.test(key) ? strings(item) : discoverColumnNewValues(item));
+}
+
+function strings(value) {
+  if (Array.isArray(value)) return value.flatMap(strings);
+  if (value && typeof value === 'object') return Object.values(value).flatMap(strings);
+  return typeof value === 'string' ? [value] : [];
 }
 
 function textKey(key = '') {
