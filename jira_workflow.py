@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from urllib.parse import urljoin
 from session_guard import dismiss_jira_notice, ensure_logged_in
 
 SCREENSHOT_DIR = Path("/private/tmp/aem-publishing-screenshots")
@@ -17,7 +18,10 @@ async def _click_or_report(page, locator, description, col):
     try:
         await locator.wait_for(state="visible", timeout=20000)
         await page.wait_for_timeout(1000)  # settle buffer after detection, in case of site lag
-        await locator.click()
+        try:
+            await locator.click()
+        except Exception:
+            await locator.click(force=True)
     except Exception as e:
         shot = await _screenshot(page, col, description)
         raise RuntimeError(
@@ -29,7 +33,7 @@ async def _click_or_report(page, locator, description, col):
 async def _status_is_live(page):
     """Ground truth: the PRODUCTION status opsbar dropdown reads 'LIVE'."""
     try:
-        dropdown = page.locator("#opsbar-transitions_more .dropdown-text")
+        dropdown = page.locator("#opsbar-transitions_more")
         return await dropdown.is_visible() and (await dropdown.inner_text()).strip().upper() == "LIVE"
     except Exception:
         return False
@@ -145,7 +149,7 @@ async def _exact_slug_rows(rows, col):
     return exact
 
 
-async def process_column(page, col, status=lambda _: None):
+async def process_column(page, col, transition_lock, status=lambda _: None):
     """
     col: TranslationColumn (sheet_name, col_idx, site_code, url_title, editor_url)
     Returns: "done" | "not_found" | "ambiguous"
@@ -154,7 +158,11 @@ async def process_column(page, col, status=lambda _: None):
     await ensure_logged_in(page)
     await dismiss_jira_notice(page)
     status("searching Jira")
-    await page.get_by_role("link", name="tickets Assigned to Me").click()
+    tickets = page.get_by_role("link", name="tickets Assigned to Me")
+    tickets_url = await tickets.get_attribute("href")
+    if not tickets_url:
+        raise RuntimeError("Jira ticket navigation has no URL.")
+    await page.goto(urljoin(page.url, tickets_url), wait_until="domcontentloaded")
     search_box = page.get_by_role("textbox", name="Contains text")
     await search_box.click()
     await search_box.fill(f"{col.site_code} {col.url_title}")
@@ -178,42 +186,45 @@ async def process_column(page, col, status=lambda _: None):
     else:
         ticket = rows.first
 
-    await ticket.click()
-    await page.wait_for_load_state("networkidle")
+    issue_url = await ticket.get_attribute("href")
+    if not issue_url:
+        raise RuntimeError("Jira search result has no issue URL.")
+    async with transition_lock:
+        await page.goto(urljoin(page.url, issue_url), wait_until="domcontentloaded")
 
-    # A previous attempt may have completed after its browser timed out.
-    if await _status_is_live(page):
-        status("already live")
-        return "done"
+        # A previous attempt may have completed after its browser timed out.
+        if await _status_is_live(page):
+            status("already live")
+            return "done"
 
-    if not await _is_in_production(page):
-        status("starting AEM workflow")
-        # Step 6: New Request -> Start AEM Workflow -> confirm
-        await _click_or_report(page, page.get_by_role("button", name="New Request"), "New Request button", col)
+        if not await _is_in_production(page):
+            status("starting AEM workflow")
+            # Step 6: New Request -> Start AEM Workflow -> confirm
+            await _click_or_report(page, page.get_by_role("button", name="New Request"), "New Request button", col)
+            await _click_or_report(
+                page, page.get_by_role("menuitem").filter(has_text="Start AEM Workflow"),
+                "Start AEM Workflow menu item", col,
+            )
+            await _submit_and_wait_close(
+                page,
+                page.get_by_role("button", name="Start AEM Workflow", exact=True),
+                page.get_by_role("heading", name="Start AEM Workflow"),
+                "Start AEM Workflow confirm button", col,
+            )
+
+        # Step 7: PRODUCTION -> Go To Live -> confirm
+        status("sending to live")
+        await _click_or_report(page, _production_dropdown(page), "PRODUCTION dropdown", col)
         await _click_or_report(
-            page, page.get_by_role("menuitem").filter(has_text="Start AEM Workflow"),
-            "Start AEM Workflow menu item", col,
+            page, page.get_by_role("menuitem").filter(has_text="Go To Live"),
+            "Go To Live menu item", col,
         )
         await _submit_and_wait_close(
             page,
-            page.get_by_role("button", name="Start AEM Workflow", exact=True),
-            page.get_by_role("heading", name="Start AEM Workflow"),
-            "Start AEM Workflow confirm button", col,
+            page.get_by_role("button", name="Go To Live", exact=True),
+            page.get_by_role("heading", name="Go To Live"),
+            "Go To Live confirm button", col,
+            success_check=lambda: _status_is_live(page),
         )
-
-    # Step 7: PRODUCTION -> Go To Live -> confirm
-    status("sending to live")
-    await _click_or_report(page, _production_dropdown(page), "PRODUCTION dropdown", col)
-    await _click_or_report(
-        page, page.get_by_role("menuitem").filter(has_text="Go To Live"),
-        "Go To Live menu item", col,
-    )
-    await _submit_and_wait_close(
-        page,
-        page.get_by_role("button", name="Go To Live", exact=True),
-        page.get_by_role("heading", name="Go To Live"),
-        "Go To Live confirm button", col,
-        success_check=lambda: _status_is_live(page),
-    )
 
     return "done"

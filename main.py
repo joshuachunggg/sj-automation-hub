@@ -141,7 +141,8 @@ async def run_publish(pending, wb, log, workers, monitor):
             await probe.close()
 
             semaphore = asyncio.Semaphore(workers)
-            results = await asyncio.gather(*(_publish_one(context, col, semaphore, monitor) for col in pending))
+            transition_lock = asyncio.Lock()
+            results = await asyncio.gather(*(_publish_one(context, col, semaphore, transition_lock, monitor) for col in pending))
             published = []
             for col, result, error in results:
                 prefix = f"[{col.sheet_name}] col {col.col_idx}: {col.url_title} ({col.site_code})"
@@ -172,7 +173,7 @@ async def run_publish(pending, wb, log, workers, monitor):
     log(f"Not confirmed live ({len(not_confirmed)}): {[f'{c.sheet_name}/{c.site_code}' for c in not_confirmed]}")
 
 
-async def _publish_one(context, col, semaphore, monitor):
+async def _publish_one(context, col, semaphore, transition_lock, monitor):
     async with semaphore:
         slot = monitor.claim(col)
         try:
@@ -183,7 +184,7 @@ async def _publish_one(context, col, semaphore, monitor):
                     await page.goto(JIRA_BASE_URL, wait_until="domcontentloaded")
                     await dismiss_jira_notice(page)
                     await ensure_logged_in(page)
-                    result = await process_column(page, col, lambda message: monitor.status(slot, f"{col.site_code}: {message}"))
+                    result = await process_column(page, col, transition_lock, lambda message: monitor.status(slot, f"{col.site_code}: {message}"))
                     monitor.status(slot, f"{col.site_code}: {result}")
                     return col, result, None
                 except Exception as error:

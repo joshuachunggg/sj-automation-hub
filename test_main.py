@@ -62,6 +62,11 @@ class LiveMonitorTest(unittest.TestCase):
         source = __import__("inspect").getsource(main.run_publish)
         self.assertIn('result == "ambiguous"', source)
 
+    def test_publish_serializes_jira_transitions(self):
+        source = __import__("inspect").getsource(main.run_publish)
+        self.assertIn("transition_lock = asyncio.Lock()", source)
+        self.assertIn("_publish_one(context, col, semaphore, transition_lock, monitor)", source)
+
     def test_monitor_marks_skipped_countries_as_not_processed(self):
         monitor = LiveMonitor(1, io.StringIO())
         with patch("builtins.print") as print_:
