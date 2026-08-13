@@ -1,11 +1,9 @@
 import { createInterface } from 'node:readline';
-import { openAemBrowser } from './aem_browser.mjs';
+import { openAemBrowser, openTab } from './aem_browser.mjs';
 
 const profile = process.argv[2];
-const { context, close } = await openAemBrowser({ browserName: 'firefox', userDataDir: profile });
-const login = await context.newPage();
+const { context, close } = await openAemBrowser({ userDataDir: profile });
 let reviewPage;
-await login.goto(process.env.WMC_LOGIN_URL || 'https://wds.samsung.com/wds/sso/login/forwardLogin.do', { waitUntil: 'domcontentloaded' });
 reply({ ready: true });
 
 createInterface({ input: process.stdin }).on('line', async (line) => {
@@ -24,7 +22,7 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
 function reply(value) { process.stdout.write(`${JSON.stringify(value)}\n`); }
 
 async function audit({ host, path, editorUrl }) {
-  const page = editorUrl ? (!reviewPage || reviewPage.isClosed() ? reviewPage = await context.newPage() : reviewPage) : await context.newPage();
+  const page = editorUrl ? (!reviewPage || reviewPage.isClosed() ? reviewPage = await openTab(context) : reviewPage) : await openTab(context);
   try {
     const response = await page.goto(`${host}${path}.infinity.json`, { waitUntil: 'domcontentloaded' });
     if (!response?.ok()) throw new Error(`Could not read ${path}: ${response?.status() || 'no response'}`);
@@ -42,7 +40,7 @@ async function audit({ host, path, editorUrl }) {
 }
 
 async function copy({ host, sourcePath, destinationPath, siteCode, slug }) {
-  const page = await context.newPage();
+  const page = await openTab(context);
   try {
     const search = new URL('/mnt/overlay/granite/ui/content/shell/omnisearch/searchresults.html', host);
     search.search = new URLSearchParams({ 'p.guessTotal': '1000', fulltext: slug, _charset_: 'utf-8', orderby: 'path', path: '/', '5_property': 'type', '6_property': 'status', '7_property': 'ownerassignee', location: 'inbox' });

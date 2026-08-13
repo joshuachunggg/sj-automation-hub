@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { openAemBrowser } from './aem_browser.mjs';
+import { openAemBrowser, openTab } from './aem_browser.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const apply = args.has('apply');
@@ -15,12 +15,8 @@ async function main() {
   const destinationPath = required('destination-path');
   const siteCode = required('site-code');
 
-  const { context, close } = await openAemBrowser({
-    browserName: args.get('browser') || 'chromium',
-    cdp: process.env.CDP || 'http://127.0.0.1:9223',
-    userDataDir: args.get('user-data-dir'),
-  });
-  const page = await context.newPage();
+  const { context, close } = await openAemBrowser({ userDataDir: args.get('user-data-dir') });
+  const page = await openTab(context);
   try {
     const ids = args.get('content-id') && args.get('request-id')
       ? { contentId: required('content-id'), requestId: required('request-id') }

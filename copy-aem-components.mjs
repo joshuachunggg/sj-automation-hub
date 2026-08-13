@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { openAemBrowser } from './aem_browser.mjs';
+import { openAemBrowser, openTab } from './aem_browser.mjs';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 
@@ -9,9 +9,7 @@ const yes = options.has('yes');
 const overwrite = options.has('overwrite');
 let sourceUrl = options.get('source');
 let targetUrl = options.get('target');
-const cdp = process.env.CDP || 'http://127.0.0.1:9223';
-const browserName = options.get('browser') || 'chromium';
-const userDataDir = options.get('user-data-dir') || `/tmp/aem-${browserName}`;
+const userDataDir = options.get('user-data-dir');
 
 const skipKeys = new Set([
   'jcr:primaryType',
@@ -38,7 +36,7 @@ async function main() {
   const targetRoot = pagePath(targetUrl);
   const requestedRelPath = options.get('container-path') || 'jcr:content/root/responsivegrid/responsivegrid';
 
-  const { context, close } = await openAemBrowser({ browserName, cdp, userDataDir });
+  const { context, close } = await openAemBrowser({ userDataDir });
   const sourcePage = await getOrOpenPage(context, sourceUrl);
   await sourcePage.goto(sourceUrl, { waitUntil: 'domcontentloaded' });
   const targetPage = await getOrOpenPage(context, targetUrl);
@@ -108,7 +106,7 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === '--apply' || arg === '--yes' || arg === '--overwrite') {
       options.set(arg.slice(2), true);
-    } else if (arg === '--source' || arg === '--target' || arg === '--container-path' || arg === '--browser' || arg === '--user-data-dir') {
+    } else if (arg === '--source' || arg === '--target' || arg === '--container-path' || arg === '--user-data-dir') {
       options.set(arg.slice(2), argv[++index]);
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -128,10 +126,8 @@ Options:
   --apply       write missing source components to target
   --yes         do not prompt before each import
   --overwrite   import all source components, replacing matching target nodes
-  --browser chromium|firefox
-                chromium attaches to CDP; firefox launches a persistent Playwright browser
   --user-data-dir PATH
-                profile dir for --browser firefox
+                Firefox profile directory
   --container-path PATH
                 component container under the page path
                 default: jcr:content/root/responsivegrid/responsivegrid`);
@@ -159,7 +155,7 @@ async function getOrOpenPage(context, url) {
       return false;
     }
   });
-  return page || await context.newPage();
+  return page || await openTab(context);
 }
 
 async function aemJson(page, path) {

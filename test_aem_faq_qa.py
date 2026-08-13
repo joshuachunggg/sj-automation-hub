@@ -7,8 +7,7 @@ logging.disable(logging.CRITICAL)
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-from aem_faq_qa import FirefoxBridge, audit_findings, audit_page, column_kind, configure_output, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, text_findings
-from hub import chrome_command, chrome_ready, clear_screen, pick_file, screen_text
+from aem_faq_qa import FirefoxBridge, audit_findings, audit_page, column_kind, configure_output, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, save_workbook, text_findings
 
 
 class AemFaqQaTest(unittest.TestCase):
@@ -92,28 +91,12 @@ class AemFaqQaTest(unittest.TestCase):
         self.assertEqual(ws.cell(3, 2).value, "https://p6spp-ap-author.samsung.com/editor.html/content/samsung/sg/support/mobile-devices/example.html")
         save.assert_called_once_with("workbook.xlsx")
 
-    def test_chrome_ready_returns_false_when_port_is_closed(self):
-        with patch("hub.urlopen", side_effect=OSError):
-            self.assertFalse(chrome_ready())
-
-    def test_picker_returns_the_native_selection(self):
-        with patch("hub.platform.system", return_value="Darwin"), patch(
-            "hub.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="/tmp/faq.xlsx\n")
-        ):
-            self.assertEqual(pick_file(), "/tmp/faq.xlsx")
-
-    def test_chrome_command_uses_windows_standard_location(self):
-        with patch("hub.platform.system", return_value="Windows"), patch.dict(
-            "hub.os.environ", {"LOCALAPPDATA": "C:/Users/test/AppData/Local"}, clear=True
-        ), patch("hub.Path.exists", return_value=True):
-            self.assertEqual(chrome_command(), "C:/Users/test/AppData/Local/Google/Chrome/Application/chrome.exe")
-
-    def test_windows_tui_clears_and_escapes_wide_text(self):
-        screen = Mock()
-        with patch("hub.platform.system", return_value="Windows"):
-            clear_screen(screen)
-            self.assertEqual(screen_text("日本語"), r"\u65e5\u672c\u8a9e")
-        screen.clear.assert_called_once()
+    def test_save_retries_after_workbook_unlock(self):
+        workbook = Mock()
+        workbook.save.side_effect = [PermissionError, None]
+        with patch("builtins.input", return_value=""):
+            save_workbook(workbook, "workbook.xlsx")
+        self.assertEqual(workbook.save.call_count, 2)
 
     def test_audit_failure_without_stderr_does_not_stop_the_pass(self):
         wb = Workbook()
@@ -121,7 +104,7 @@ class AemFaqQaTest(unittest.TestCase):
         ws.title = "Global"
         ws.cell(8, 2).value = "sg"
         ws.cell(13, 2).value = "example"
-        args = SimpleNamespace(apply=False, review=False, copy_workers=1)
+        args = SimpleNamespace(apply=False, review=False, copy_workers=1, browser=None)
         error = __import__("subprocess").CalledProcessError(1, ["node"], stderr="")
         with patch("aem_faq_qa.audit_page", side_effect=error):
             run_all(wb, args)
@@ -145,7 +128,7 @@ class AemFaqQaTest(unittest.TestCase):
         ws.title = "Global"
         ws.cell(8, 2).value = "sg"
         ws.cell(13, 2).value = "example"
-        args = SimpleNamespace(apply=False, review=False, copy_workers=1)
+        args = SimpleNamespace(apply=False, review=False, copy_workers=1, browser=None)
         with patch("aem_faq_qa.audit_page", side_effect=__import__("subprocess").TimeoutExpired(["node"], 60)):
             run_all(wb, args)
 
@@ -155,7 +138,7 @@ class AemFaqQaTest(unittest.TestCase):
         ws.title = "Global"
         ws.cell(8, 2).value = "sg"
         ws.cell(13, 2).value = "example"
-        args = SimpleNamespace(apply=False, review=True, copy_workers=1)
+        args = SimpleNamespace(apply=False, review=True, copy_workers=1, browser=None)
         with patch("aem_faq_qa.audit_page", side_effect=RuntimeError("Could not open AEM editor: 404")):
             run_all(wb, args)
 

@@ -1,649 +1,159 @@
 #!/usr/bin/env python3
-import curses
+"""Local web front end for SJ Design Automation Hub."""
 import json
 import os
 import platform
-import shlex
-import shutil
 import subprocess
 import sys
-import time
+import threading
+import webbrowser
 from datetime import datetime
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent
-CHROME_PROFILE = ROOT / ".aem-chrome"
-FIREFOX_PROFILE = ROOT / ".aem-firefox"
+PROFILE = ROOT / ".firefox-profile"
 LOG_DIR = ROOT / "logs"
-ENV_FILE = ROOT / ".env"
-CDP_ENDPOINT = "http://127.0.0.1:9223"
-CDP_ENDPOINTS = ("http://127.0.0.1:9223", "http://127.0.0.1:9222")
-
-
-def main():
-    if hasattr(curses, "set_escdelay"):
-        curses.set_escdelay(25)
-    while True:
-        choice = menu(
-            "SJ Design Automation Hub",
-            [
-                ("Live publishing", aem_publishing, "Publish pending FAQ translations through Jira"),
-                ("UK/CA Master", component_copier, "Copy missing author-page components"),
-                ("Finalize Authoring", aem_faq_qa, "Audit and copy FAQ content across locales"),
-                ("Logs", logs, "Open a saved run log"),
-                ("Quit", None, "Close the hub"),
-            ],
-            back=False,
-        )
-        if choice is None:
-            return
-        choice()
-
-
-def menu(title, items, back=True):
-    def draw(screen):
-        setup_screen(screen)
-        selected = 0
-        while True:
-            clear_screen(screen)
-            height, width = screen.getmaxyx()
-            header(screen, title)
-            for index, item in enumerate(items):
-                label, _, description = (*item, "")[:3]
-                attr = curses.color_pair(2) | curses.A_BOLD if index == selected else curses.color_pair(3)
-                row = 5 + index * (2 if description else 1)
-                marker = ">" if index == selected else " "
-                screen.addnstr(row, 4, f"{marker} {label}", width - 8, attr)
-                if description:
-                    screen.addnstr(row + 1, 7, screen_text(description), width - 11, curses.color_pair(6))
-            shortcuts = " Up/Down move  Enter select  q quit " if not back else " Up/Down move  Enter select  b/Esc back "
-            footer(screen, shortcuts)
-            key = screen.getch()
-            if key == ord("q") or (back and key in (ord("b"), 27)):
-                return None
-            if key in (curses.KEY_UP, ord("k")):
-                selected = (selected - 1) % len(items)
-            elif key in (curses.KEY_DOWN, ord("j")):
-                selected = (selected + 1) % len(items)
-            elif key in (10, 13):
-                return items[selected][1]
-
-    return curses.wrapper(draw)
-
-
-def component_copier():
-    browser = aem_browser()
-    if not panel(
-        "AEM Component Copier",
-        [
-            "Copies missing AEM components from one author page to another.",
-            f"{browser.title()} will open for AEM login.",
-            "Log into AEM, then return here.",
-            "The target container is locked to jcr:content/root/responsivegrid/responsivegrid by default.",
-        ],
-        wait=True,
-    ):
-        return
-    if browser == "chromium" and not ensure_aem_chrome(["Log into AEM in the Chrome window that just opened.", "Return here when both source and target author domains are logged in."]):
-        return
-    if browser == "firefox" and not ensure_aem_firefox():
-        return
-    source = ask("Source/read page URL")
-    if not source:
-        return
-    target = ask("Target/write page URL")
-    if not target:
-        return
-    yes = confirm("Bypass per-component Enter prompts?", True)
-    if yes is None:
-        return
-    args = ["node", str(ROOT / "copy-aem-components.mjs"), "--source", source, "--target", target]
-    args += aem_browser_args(browser)
-    if yes:
-        args.append("--yes")
-    run_logged("AEM Component Copier", args)
-
-
-def aem_publishing():
-    choice = menu(
-        "AEM FAQ Publishing",
-        [
-            ("Publish pending country columns", "publish"),
-            ("Validate already-published live URLs", "validate"),
-            ("Validate all locale URLs", "validate-all", "Check and write every locale URL without Jira"),
-            ("Jira login setup", "login"),
-        ],
-    )
-    if not choice:
-        return
-    browser = menu("Publishing Browser", [
-        ("Firefox", "firefox", "Use Playwright Firefox for Jira and live checks"),
-        ("Chromium", "chromium", "Use Playwright Chromium for Jira and live checks"),
-    ])
-    if not browser:
-        return
-    if choice == "login":
-        return jira_login(browser)
-    workbook = ask_path("Publishing workbook", None)
-    if not workbook:
-        return
-    workers = ask("Parallel Jira tabs (1-15)", "10")
-    if workers is None:
-        return
-    args = [python(), str(ROOT / "main.py"), "--workbook", str(workbook), "--workers", workers, "--browser", browser]
-    if choice in ("validate", "validate-all"):
-        args.append("--validate-all" if choice == "validate-all" else "--validate-only")
-    run_logged("AEM FAQ Publishing", args)
-
-
-def jira_login(browser="chromium"):
-    LOG_DIR.mkdir(exist_ok=True)
-    log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-jira-login-setup.log"
-    with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.Popen(
-            [python(), str(ROOT / "auth_login.py"), "--browser", browser],
-            stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1,
-        )
-        if panel("Jira Login", ["Complete SSO/MFA in the browser, then press Enter to save this hub's local session."], wait=True):
-            process.stdin.write("\n")
-            process.stdin.flush()
-            wait_process("Jira Login Setup", process, log_path)
-        else:
-            process.terminate()
-
-
-def aem_faq_qa():
-    browser = aem_browser()
-    if not panel(
-        "AEM FAQ QA",
-        [
-            "Audits and reviews each unapproved parent, then copies approved children.",
-            f"Uses {browser.title()} for AEM.",
-            "Log into Global, Europe, and America before starting the full pass.",
-        ],
-        wait=True,
-    ):
-        return
-    workbook = ask_path("FAQ workbook", None)
-    if not workbook:
-        return
-    mode = menu(
-        "AEM FAQ QA",
-        [
-            ("Show workbook plan", "plan"),
-            ("Audit, review, and copy", "review"),
-        ],
-    )
-    if not mode:
-        return
-    args = [python(), str(ROOT / "aem_faq_qa.py"), "--workbook", str(workbook)]
-    if mode == "plan":
-        args.append("--plan")
-        return run_logged("AEM FAQ QA Plan", args)
-
-    if browser == "chromium" and not ensure_faq_chrome():
-        return
-    if not confirm("Audit and review every unapproved parent, then copy approved children?", False):
-        return
-    args.append("--all")
-    args += aem_browser_args(browser)
-    args += ["--review", "--apply"]
-    run_logged("AEM FAQ QA Full Pass", args, review=True, env=load_env() if browser == "firefox" else None, mfa=browser == "firefox")
-
-
-def logs():
-    LOG_DIR.mkdir(exist_ok=True)
-    files = sorted(LOG_DIR.glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
-    if not files:
-        panel("Logs", ["No logs yet."], wait=True)
-        return
-    chosen = menu("Logs", [(path.name, path) for path in files[:30]])
-    if chosen:
-        view_log(chosen)
-
-
-def panel(title, lines, wait=False):
-    def draw(screen):
-        setup_screen(screen)
-        while True:
-            clear_screen(screen)
-            height, width = screen.getmaxyx()
-            header(screen, title)
-            for row, line in enumerate(lines, 3):
-                screen.addnstr(row, 4, screen_text(line), width - 8)
-            label = " Enter continue  b/Esc back " if wait else " b/Esc back "
-            footer(screen, label)
-            if not wait:
-                screen.getch()
-                return True
-            key = screen.getch()
-            if key in (10, 13):
-                return True
-            if key in (ord("b"), 27):
-                return False
-
-    return curses.wrapper(draw)
-
-
-def ask(label, default=None):
-    def draw(screen):
-        setup_screen(screen, cursor=True)
-        value = default or ""
-        while True:
-            clear_screen(screen)
-            height, width = screen.getmaxyx()
-            header(screen, label)
-            screen.addnstr(4, 4, screen_text(value), width - 8)
-            footer(screen, " Enter accept  Esc back  Backspace delete ")
-            key = screen.getch()
-            if key in (10, 13):
-                return value.strip()
-            if key == 27:
-                return None
-            if key in (curses.KEY_BACKSPACE, 127, 8):
-                value = value[:-1]
-            elif 32 <= key <= 126:
-                value += chr(key)
-
-    return curses.wrapper(draw)
-
-
-def ask_path(label, default):
-    while True:
-        answer = ask(label, str(default) if default else "")
-        if answer is None:
-            return None
-        if not answer:
-            picked = pick_file()
-            if picked:
-                answer = picked
-            else:
-                continue
-        value = Path(answer).expanduser()
-        if value.exists():
-            return value
-        panel("File Not Found", [str(value)], wait=True)
-
-
-def confirm(label, default):
-    chosen = menu(label, [("Yes", True), ("No", False)])
-    return chosen
-
-
-def ensure_aem_chrome(login_lines):
-    if use_existing_dev_chrome():
-        return True
-    if not launch_dev_chrome():
-        return False
-    activate_dev_chrome()
-    return panel("Chrome Login", login_lines, wait=True)
-
-
-def ensure_faq_chrome():
-    if use_existing_dev_chrome():
-        return True
-    if not dev_chrome_ready():
-        if not launch_dev_chrome():
-            return False
-        for _ in range(40):
-            if dev_chrome_ready():
-                break
-            time.sleep(0.25)
-        else:
-            panel("Dev Chrome Did Not Start", ["Close a stale Hub Chrome process and try again."], wait=True)
-            return False
-    activate_dev_chrome()
-    values = load_env()
-    return run_logged(
-        "Samsung WMC Login",
-        ["node", str(ROOT / "aem_wmc_login.mjs")],
-        env=values, mfa=True, return_on_success=True,
-    )
-
-
-def ensure_faq_browser(browser):
-    return ensure_faq_chrome() if browser == "chromium" else ensure_aem_firefox()
-
-
-def ensure_aem_firefox():
-    return run_logged(
-        "Samsung WMC Login",
-        ["node", str(ROOT / "aem_wmc_login.mjs"), *aem_browser_args("firefox")],
-        env=load_env(), mfa=True, return_on_success=True,
-    )
-
-
-def aem_browser():
-    default = "firefox" if platform.system() == "Windows" else "chromium"
-    return os.environ.get("AEM_BROWSER", default).lower() if os.environ.get("AEM_BROWSER", default).lower() in ("chromium", "firefox") else default
-
-
-def aem_browser_args(browser):
-    return ["--browser", browser, "--user-data-dir", str(FIREFOX_PROFILE)] if browser == "firefox" else []
-
-
-def dev_chrome_ready():
-    return bool(dev_chrome_endpoint())
-
-
-def dev_chrome_endpoint():
-    for endpoint in CDP_ENDPOINTS:
-        if endpoint_ready(endpoint):
-            return endpoint
-    return ""
-
-
-def endpoint_ready(endpoint):
-    try:
-        with urlopen(f"{endpoint}/json/version", timeout=0.2) as response:
-            version = json.load(response)
-            return response.status == 200 and "Chrome" in version.get("Browser", "") and bool(version.get("webSocketDebuggerUrl"))
-    except (OSError, ValueError):
-        return False
-
-
-def use_existing_dev_chrome():
-    global CDP_ENDPOINT
-    endpoint = dev_chrome_endpoint()
-    if endpoint:
-        CDP_ENDPOINT = endpoint
-        return True
-    return False
-
-
-def chrome_ready():
-    """Backward-compatible name for callers that only need the dev-Chrome check."""
-    return dev_chrome_ready()
-
-
-def python():
-    return os.environ.get("PYTHON", sys.executable)
-
-
-def run_logged(title, args, cwd=None, review=False, env=None, mfa=False, return_on_success=False):
-    LOG_DIR.mkdir(exist_ok=True)
-    log_path = LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}-{slug(title)}.log"
-    with log_path.open("w", encoding="utf-8") as log:
-        log.write("$ " + " ".join(shlex.quote(str(arg)) for arg in args) + "\n\n")
-        log.flush()
-        process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, **(env or {}), "CDP": CDP_ENDPOINT, "PYTHONIOENCODING": "utf-8"})
-        return wait_process(title, process, log_path, review, mfa, return_on_success)
-
-
-def wait_process(title, process, log_path, review=False, mfa=False, return_on_success=False):
-    def draw(screen):
-        setup_screen(screen)
-        screen.timeout(250)
-        started = time.time()
-        handled_review = ""
-        handled_server_setup = False
-        previous_lines = None
-        while process.poll() is None:
-            height, width = screen.getmaxyx()
-            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            if lines != previous_lines:
-                clear_screen(screen)
-                header(screen, title)
-                progress = next((line for line in reversed(lines) if line.startswith("PROGRESS ")), "Running")
-                findings = sum(line.startswith("FINDING ") for line in lines)
-                copies = sum(line.startswith("COPY DONE ") for line in lines)
-                screen.addnstr(3, 4, screen_text(progress), width - 8, curses.color_pair(2) | curses.A_BOLD)
-                screen.addnstr(4, width // 3, f"Findings {findings}", width // 3 - 4, curses.color_pair(4))
-                screen.addnstr(4, 2 * width // 3, f"Copies {copies}", width // 3 - 4, curses.color_pair(5))
-                screen.addnstr(6, 4, "Recent activity", width - 8, curses.A_BOLD | curses.color_pair(3))
-                rows = max(1, height - 10)
-                for row, line in enumerate(lines[-rows:], 7):
-                    screen.addnstr(row, 4, screen_text(line), width - 8, curses.color_pair(3))
-                footer(screen, " Ctrl+C stop  live log is saved ")
-                previous_lines = lines
-            screen.addnstr(4, 4, f"Elapsed {int(time.time() - started)}s", width // 3 - 6, curses.color_pair(3))
-            screen.refresh()
-            key = screen.getch()
-            if review:
-                pending = next((line for line in reversed(lines) if line.startswith("REVIEW ITEM ")), "")
-                if pending and pending != handled_review:
-                    handled_review = pending
-                    if not review_prompt(screen, process, lines, pending):
-                        process.terminate()
-                        return False
-                    continue
-            if mfa and not handled_server_setup and "SERVER SETUP READY" in lines:
-                handled_server_setup = True
-                if server_setup_prompt(screen):
-                    process.stdin.write("\n")
-                    process.stdin.flush()
-                    continue
-                process.terminate()
-                return False
-            if key == 3:
-                process.terminate()
-                return False
-        clear_screen(screen)
-        if return_on_success and process.returncode == 0:
-            return True
-        status = "completed" if process.returncode == 0 else f"exited with code {process.returncode}"
-        height, width = screen.getmaxyx()
-        header(screen, title)
-        screen.addnstr(3, 4, f"Automation {status}.", width - 8)
-        screen.addnstr(5, 4, screen_text(f"Log: {log_path}"), width - 8)
-        footer(screen, " Enter return to hub  l view log ")
-        while True:
-            key = screen.getch()
-            if key in (10, 13):
-                return process.returncode == 0
-            if key == ord("l"):
-                view_log(log_path)
-
-    try:
-        return curses.wrapper(draw)
-    except KeyboardInterrupt:
-        process.terminate()
-        return False
-
-
-def server_setup_prompt(screen):
-    screen.timeout(-1)
-    while True:
-        clear_screen(screen)
-        height, width = screen.getmaxyx()
-        header(screen, "Prepare AEM Support servers")
-        screen.addnstr(5, 4, "Log in to WMC, then open Support for Global, Europe, and America.", width - 8, curses.color_pair(3))
-        screen.addnstr(7, 4, "Press Enter here once logged in and all servers loaded.", width - 8, curses.color_pair(6))
-        footer(screen, " Enter continue with FAQ QA  Esc cancel ")
-        key = screen.getch()
-        if key in (10, 13):
-            screen.timeout(250)
-            return True
-        if key == 27:
-            screen.timeout(250)
-            return False
-
-
-def review_prompt(screen, process, lines, review_line):
-    screen.timeout(-1)
-    _, _, target, link = review_line.split(" ", 3)
-    while True:
-        clear_screen(screen)
-        height, width = screen.getmaxyx()
-        header(screen, f"Review {target}")
-        screen.addnstr(3, 4, screen_text(link), width - 8)
-        findings = [line for line in lines if line.startswith(f"FINDING {target}:")]
-        screen.addnstr(5, 4, "Found:", width - 8, curses.A_BOLD)
-        shown = findings or ["No heuristic differentials found."]
-        for row, finding in enumerate(shown[-max(1, height - 9):], 6):
-            screen.addnstr(row, 4, screen_text(finding), width - 8)
-        footer(screen, " y approve and write row 3   n skip (then optional note) ")
-        key = screen.getch()
-        if key == ord("y"):
-            process.stdin.write("y\n")
-            process.stdin.flush()
-            screen.timeout(250)
-            return True
-        if key == ord("n"):
-            process.stdin.write(f"n {review_note(screen)}\n")
-            process.stdin.flush()
-            screen.timeout(250)
-            return True
-        if key in (27, ord("b")):
-            screen.timeout(250)
-            return False
-
-
-def review_note(screen):
-    value = ""
-    while True:
-        clear_screen(screen)
-        height, width = screen.getmaxyx()
-        header(screen, "Optional review note")
-        screen.addnstr(4, 4, screen_text(value), width - 8)
-        footer(screen, " Enter save note  Esc no note ")
-        key = screen.getch()
-        if key in (10, 13):
-            return value.strip()
-        if key == 27:
-            return ""
-        if key in (curses.KEY_BACKSPACE, 127, 8):
-            value = value[:-1]
-        elif 32 <= key <= 126:
-            value += chr(key)
-
-
-def view_log(path):
-    text = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    def draw(screen):
-        setup_screen(screen)
-        offset = max(0, len(text) - 1)
-        while True:
-            clear_screen(screen)
-            height, width = screen.getmaxyx()
-            header(screen, path.name)
-            rows = height - 4
-            start = max(0, min(offset, len(text) - rows))
-            for row, line in enumerate(text[start:start + rows], 3):
-                screen.addnstr(row, 0, screen_text(line), width - 1)
-            footer(screen, " Up/Down scroll  b/Esc back  q quit ")
-            key = screen.getch()
-            if key in (ord("b"), ord("q"), 27):
-                return
-            if key in (curses.KEY_UP, ord("k")):
-                offset = max(0, offset - 1)
-            elif key in (curses.KEY_DOWN, ord("j")):
-                offset = min(len(text), offset + 1)
-
-    return curses.wrapper(draw)
-
-
-def slug(value):
-    return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-")
-
-
-def pick_file():
-    """Use the platform file chooser; return empty when it is cancelled or unavailable."""
+SSO_URL = "https://wds.samsung.com/wds/sso/login/forwardLogin.do"
+jobs = {}
+lock = threading.Lock()
+
+
+def command(action, data):
+    profile = str(PROFILE)
+    if action == "login":
+        return [sys.executable, str(ROOT / "auth_login.py"), "--profile", profile]
+    if action == "copy":
+        return ["node", str(ROOT / "copy-aem-components.mjs"), "--source", data["source"], "--target", data["target"], "--yes", "--user-data-dir", profile]
+    if action == "publish":
+        args = [sys.executable, str(ROOT / "main.py"), "--workbook", data["workbook"], "--workers", str(data.get("workers") or 10)]
+        if data.get("mode") == "validate": args.append("--validate-only")
+        if data.get("mode") == "validate-all": args.append("--validate-all")
+        return args
+    if action == "qa":
+        args = [sys.executable, str(ROOT / "aem_faq_qa.py"), "--workbook", data["workbook"], "--browser", "firefox", "--user-data-dir", profile]
+        return args + (["--plan"] if data.get("mode") == "plan" else ["--all", "--review", "--apply"])
+    raise ValueError("Unknown action")
+
+
+def start(action, data):
+    if action != "login" and not data.get("workbook") and action in {"publish", "qa"}:
+        raise ValueError("Workbook path required")
+    if action == "copy" and (not data.get("source") or not data.get("target")):
+        raise ValueError("Source and target URLs required")
+    with lock:
+        if any(job["process"].poll() is None for job in jobs.values()):
+            raise ValueError("Another job is running")
+        LOG_DIR.mkdir(exist_ok=True)
+        job_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        log = LOG_DIR / f"{job_id}-{action}.log"
+        stream = log.open("w", encoding="utf-8")
+        process = subprocess.Popen(command(action, data), stdin=subprocess.PIPE, stdout=stream, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, "AEM_PROFILE": str(PROFILE), "PYTHONIOENCODING": "utf-8"})
+        jobs[job_id] = {"process": process, "log": log, "action": action}
+    return job_id
+
+
+def state(job_id):
+    job = jobs.get(job_id)
+    if not job: raise ValueError("Job not found")
+    output = job["log"].read_text(encoding="utf-8", errors="replace") if job["log"].exists() else ""
+    review = next((line for line in reversed(output.splitlines()) if line.startswith("REVIEW ITEM ")), "")
+    locked = next((line for line in reversed(output.splitlines()) if line.startswith("WORKBOOK LOCKED:")), "")
+    raw = "\n".join(line for line in output.splitlines() if not line.startswith("UI "))
+    return {"id": job_id, "action": job["action"], "running": job["process"].poll() is None, "code": job["process"].poll(), "output": raw[-12000:], "review": review, "locked": locked, "dashboard": dashboard(output)}
+
+
+def dashboard(output):
+    view = {"kind": "", "workers": {}, "locales": {}, "parents": {}, "children": {}, "current": {}}
+    for line in output.splitlines():
+        if not line.startswith("UI "):
+            continue
+        try:
+            event = json.loads(line[3:])
+        except json.JSONDecodeError:
+            continue
+        view["kind"] = event.get("kind", view["kind"])
+        kind, name = event.get("kind"), event.get("event")
+        if name == "start":
+            view["total"] = event.get("total") or event.get("parents") or 0
+            view["mode"] = event.get("mode", "")
+            view["children_total"] = event.get("children", 0)
+            for site in event.get("locales", []): view["locales"][site] = {"status": "pending"}
+            for site in event.get("child_sites", []): view["children"][site] = {"site": site, "status": "not copied"}
+        elif kind == "publish" and name == "worker":
+            view["workers"][str(event["slot"])] = {key: event[key] for key in ("site", "status") if key in event}
+        elif kind == "publish" and name == "locale":
+            view["locales"][event["site"]] = {"site": event["site"], "status": event["status"]}
+        elif kind == "qa" and name == "parent":
+            view["parents"][event["site"]] = {key: event[key] for key in ("sheet", "site", "link", "status", "findings", "index", "total") if key in event}
+            view["current"] = view["parents"][event["site"]]
+        elif kind == "qa" and name == "child":
+            view["children"][event["site"]] = {key: event[key] for key in ("sheet", "site", "status", "error", "index", "total") if key in event}
+    return view
+
+
+def pick_workbook():
     if platform.system() == "Darwin":
         result = subprocess.run(
-            ["osascript", "-e", 'POSIX path of (choose file with prompt "Choose FAQ workbook" of type {"org.openxmlformats.spreadsheetml.sheet"})'],
-            text=True, capture_output=True,
+            ["osascript", "-e", 'POSIX path of (choose file with prompt "Choose workbook" of type {"org.openxmlformats.spreadsheetml.sheet"})'],
+            capture_output=True, text=True,
         )
         return result.stdout.strip() if result.returncode == 0 else ""
     try:
         from tkinter import Tk, filedialog
-        root = Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        selected = filedialog.askopenfilename(title="Choose FAQ workbook", filetypes=[("Excel workbooks", "*.xlsx")])
+        root = Tk(); root.withdraw(); root.attributes("-topmost", True)
+        selected = filedialog.askopenfilename(title="Choose workbook", filetypes=[("Excel workbooks", "*.xlsx")])
         root.destroy()
         return selected
     except Exception:
         return ""
 
 
-def load_env():
-    values = {}
-    if not ENV_FILE.exists():
-        return values
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.partition("=")
-        if sep and key and not key.startswith("#"):
-            values[key.strip()] = value.strip()
-    return values
+class App(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/": return self.reply(200, PAGE, "text/html")
+        if self.path.startswith("/api/job/"):
+            try: return self.json(200, state(self.path.rsplit("/", 1)[-1]))
+            except ValueError as error: return self.json(404, {"error": str(error)})
+        return self.reply(404, "Not found")
+
+    def do_POST(self):
+        try:
+            data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or "{}")
+            if self.path == "/api/pick-workbook": return self.json(200, {"path": pick_workbook()})
+            if self.path == "/api/start": return self.json(201, {"id": start(data["action"], data)})
+            job = jobs[self.path.rsplit("/", 2)[-2]]
+            if self.path.endswith("/input"):
+                job["process"].stdin.write(data.get("value", "") + "\n"); job["process"].stdin.flush()
+                return self.json(200, {"ok": True})
+            raise ValueError("Unknown endpoint")
+        except (KeyError, ValueError, BrokenPipeError) as error: return self.json(400, {"error": str(error)})
+
+    def reply(self, code, body, content_type="text/plain"):
+        encoded = body.encode()
+        self.send_response(code); self.send_header("Content-Type", f"{content_type}; charset=utf-8"); self.send_header("Content-Length", len(encoded)); self.end_headers(); self.wfile.write(encoded)
+
+    def json(self, code, value): self.reply(code, json.dumps(value), "application/json")
+    def log_message(self, *_): pass
 
 
-def chrome_command():
-    configured = os.environ.get("CHROME")
-    if configured:
-        return configured
-    system = platform.system()
-    candidates = {
-        "Darwin": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
-        "Windows": [
-            str(Path(folder) / "Google/Chrome/Application/chrome.exe")
-            for folder in (os.environ.get("LOCALAPPDATA"), os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"))
-            if folder
-        ],
-    }.get(system, [])
-    candidates.extend(filter(None, (shutil.which(name) for name in ("google-chrome", "chromium", "chromium-browser", "chrome"))))
-    return next((candidate for candidate in candidates if Path(candidate).exists()), None)
+PAGE = r'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>SJ Automation Hub</title>
+<style>*{box-sizing:border-box}body{font:15px system-ui;margin:0;background:#f1f5f9;color:#0f172a}.app{max-width:1500px;margin:auto;padding:24px;display:grid;grid-template-columns:minmax(310px,390px) 1fr;gap:22px}.left{position:sticky;top:0;height:100vh;overflow:auto;padding-bottom:24px}.brand{margin:4px 0 18px}h1{font-size:24px;margin:0}h2{font-size:17px;margin:0 0 12px}small,p{color:#64748b}section,.panel{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin:12px 0;box-shadow:0 1px 2px #0f172a0a}input,button{font:inherit;padding:9px;border-radius:7px;border:1px solid #cbd5e1}input{width:100%;margin:5px 0}button{cursor:pointer;background:#16a34a;color:white;border:0;font-weight:700;margin:4px 3px 0 0}button.alt{background:#e0f2fe;color:#075985}.right{min-width:0}.top{display:flex;justify-content:space-between;align-items:center}.summary{font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}.card{border:1px solid #e2e8f0;border-left:5px solid #94a3b8;border-radius:8px;padding:9px;background:#fff}.card b{display:block}.pending{border-left-color:#f59e0b}.live,.validated,.copied,.approved{border-left-color:#22c55e}.error,.not-live,.not-copied,.not-approved{border-left-color:#ef4444}.copying,.qa-done,.checking-live,.opening-jira,.starting,.retrying{border-left-color:#3b82f6}.findings{margin:6px 0 0;padding-left:16px;color:#b45309}.worker{background:#f8fafc}a{color:#2563eb;word-break:break-all}pre{white-space:pre-wrap;max-height:380px;overflow:auto;background:#0f172a;color:#dbeafe;padding:14px;border-radius:8px;margin:10px 0 0}@media(max-width:850px){.app{display:block}.left{position:static;height:auto}}</style>
+<main class="app"><aside class="left"><div class="brand"><h1>SJ Automation Hub</h1><small>One Firefox SSO session.</small></div><section><h2>1. Sign in</h2><p>Firefox enters credentials, then waits for your MFA approval.</p><button onclick="start('login')">Sign in</button></section><section><h2>Live publishing</h2><input id="publish-workbook" placeholder="Choose workbook" readonly><button class="alt" onclick="pick('publish-workbook')">Choose .xlsx</button><input id="workers" type="number" min="1" max="15" value="10"><button onclick="start('publish',{workbook:v('publish-workbook'),workers:v('workers'),mode:'publish'})">Publish</button><button class="alt" onclick="start('publish',{workbook:v('publish-workbook'),workers:v('workers'),mode:'validate'})">Validate pending</button><button class="alt" onclick="start('publish',{workbook:v('publish-workbook'),workers:v('workers'),mode:'validate-all'})">Validate all</button></section><section><h2>UK/CA Master</h2><input id="source" placeholder="Source AEM URL"><input id="target" placeholder="Target AEM URL"><button onclick="start('copy',{source:v('source'),target:v('target')})">Copy components</button></section><section><h2>Finalize authoring</h2><input id="qa-workbook" placeholder="Choose workbook" readonly><button class="alt" onclick="pick('qa-workbook')">Choose .xlsx</button><button class="alt" onclick="start('qa',{workbook:v('qa-workbook'),mode:'plan'})">Show plan</button><button onclick="start('qa',{workbook:v('qa-workbook'),mode:'review'})">Audit, review, copy</button></section></aside><section class="right"><div class="top"><h2 id="title">Run dashboard</h2><span id="state" class="summary">Idle</span></div><div id="dashboard"><small>Start an automation to see live progress.</small></div><div id="review"></div><h2>Raw log</h2><pre id="log"></pre></section></main>
+<script>let id='';const v=x=>document.getElementById(x).value,esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),cls=s=>String(s||'pending').toLowerCase().replaceAll(' ','-');function card(x,extra=''){let f=x.findings?.length?'<ul class="findings">'+x.findings.map(y=>'<li>'+esc(y)+'</li>').join('')+'</ul>':'';return '<div class="card '+cls(x.status)+' '+extra+'"><b>'+esc(x.site||'Worker')+'</b><small>'+esc(x.status||'pending')+'</small>'+(x.link?'<br><a target="_blank" href="'+esc(x.link)+'">Open AEM editor</a>':'')+f+'</div>'}function draw(d,running){let el=document.getElementById('dashboard');if(!d.kind){el.innerHTML='<small>Waiting for automation progress.</small>';return}if(d.kind==='publish'){let locales=Object.values(d.locales),done=locales.filter(x=>/live$|error/.test(x.status)).length;if(d.mode.startsWith('validate'))locales=locales.map(x=>({...x,status:x.status==='live'?'validated':x.status}));el.innerHTML='<h2>Live publishing · '+done+'/'+(d.total||locales.length)+'</h2><h3>Workers</h3><div class="grid">'+Object.entries(d.workers).map(([n,x])=>card({site:'Worker '+n+(x.site?' · '+x.site:''),status:x.status},'worker')).join('')+'</div><h3>Countries</h3><div class="grid">'+locales.map(card).join('')+'</div>';return}let parents=Object.values(d.parents),children=Object.values(d.children),finished=parents.filter(x=>x.status!=='auditing').length;el.innerHTML='<h2>Finalize authoring · '+finished+'/'+(d.total||parents.length)+' audited</h2>'+(d.current.site?'<p>Current: <b>'+esc(d.current.site)+'</b> '+(d.current.link?'<a target="_blank" href="'+esc(d.current.link)+'">Open AEM editor</a>':'')+'</p>':'')+'<h3>QA status</h3><div class="grid">'+parents.map(card).join('')+'</div><h3>Child copies · '+children.filter(x=>x.status==='copied').length+'/'+(d.children_total||children.length)+'</h3><div class="grid">'+children.map(card).join('')+'</div>'}async function pick(field){let r=await fetch('/api/pick-workbook',{method:'POST',body:'{}'}),j=await r.json();if(j.path)document.getElementById(field).value=j.path}async function start(action,data={}){let r=await fetch('/api/start',{method:'POST',body:JSON.stringify({action,...data})}),j=await r.json();if(j.error)return alert(j.error);id=j.id;poll()}async function send(value){if(!id)return alert('Start sign in first.');await fetch('/api/job/'+id+'/input',{method:'POST',body:JSON.stringify({value})})}async function poll(){if(!id)return;let r=await fetch('/api/job/'+id),j=await r.json();document.getElementById('log').textContent=j.output||'';document.getElementById('state').textContent=j.running?'Running':'Finished'+(j.code?' · failed':'');document.getElementById('title').textContent=j.action==='qa'?'Finalize authoring':j.action==='publish'?'Live publishing':'Run dashboard';draw(j.dashboard,j.running);document.getElementById('review').innerHTML=j.locked?'<section><b>Workbook locked</b><p>'+esc(j.locked)+'</p><button onclick="send(\'\')">I closed it — retry</button></section>':j.review?'<section><b>Review needed</b><p>'+esc(j.review)+'</p><button onclick="send(\'y\')">Approve</button><button class="alt" onclick="send(\'n\')">Skip</button></section>':'';if(j.running)setTimeout(poll,800)}</script>'''
 
 
-def launch_dev_chrome():
-    chrome = chrome_command()
-    if not chrome:
-        panel("Chrome Not Found", ["Install Google Chrome, or set CHROME to its executable path."], wait=True)
-        return False
-    args = [
-        "--new-window",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--remote-debugging-port=9223",
-        f"--user-data-dir={CHROME_PROFILE}",
-        "about:blank",
-    ]
-    subprocess.Popen([chrome, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return True
+def main():
+    server = ThreadingHTTPServer(("127.0.0.1", 8765), App)
+    url = "http://127.0.0.1:8765"
+    print(f"SJ Automation Hub: {url}")
+    webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
 
 
-def activate_dev_chrome():
-    if platform.system() == "Darwin":
-        subprocess.run(
-            ["osascript", "-e", 'tell application "Google Chrome" to activate'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-
-
-def setup_screen(screen, cursor=False):
-    curses.curs_set(1 if cursor else 0)
-    if curses.has_colors():
-        curses.start_color()
-        curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
-        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_CYAN)
-        curses.init_pair(3, curses.COLOR_WHITE, -1)
-        curses.init_pair(4, curses.COLOR_YELLOW, -1)
-        curses.init_pair(5, curses.COLOR_GREEN, -1)
-        curses.init_pair(6, curses.COLOR_CYAN, -1)
-
-
-def clear_screen(screen):
-    (screen.clear if platform.system() == "Windows" else screen.erase)()
-
-
-def screen_text(value):
-    text = str(value)
-    return text.encode("ascii", "backslashreplace").decode() if platform.system() == "Windows" else text
-
-
-def header(screen, title):
-    height, width = screen.getmaxyx()
-    screen.addnstr(0, 2, "SJ DESIGN  /  AUTOMATION HUB", width - 4, curses.A_BOLD | curses.color_pair(6))
-    screen.addnstr(1, 4, screen_text(title), width - 8, curses.A_BOLD | curses.color_pair(2))
-    screen.hline(2, 2, curses.ACS_HLINE, max(0, width - 4), curses.color_pair(2))
-
-
-def footer(screen, text):
-    height, width = screen.getmaxyx()
-    screen.addnstr(height - 1, 0, screen_text(text.center(max(1, width - 1))), width - 1, curses.color_pair(1) | curses.A_BOLD)
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()

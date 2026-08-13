@@ -25,6 +25,10 @@ SHEET_HOSTS = {
 }
 
 
+def ui(event, **values):
+    print("UI " + json.dumps({"kind": "qa", "event": event, **values}), flush=True)
+
+
 def main():
     configure_output()
     args = parse_args()
@@ -65,7 +69,7 @@ def main():
 
     if args.apply:
         ws.cell(3, target).value = editor_url(host, ws.cell(8, target).value, base, ws.cell(13, target).value)
-        wb.save(args.workbook)
+        save_workbook(wb, args.workbook)
         print(f"Wrote {ws.cell(3, target).coordinate}: {ws.cell(3, target).value}")
 
 
@@ -76,7 +80,7 @@ def parse_args():
     parser.add_argument("--all", action="store_true", help="audit all parents; with --apply copy children of row-3-approved parents")
     parser.add_argument("--review", action="store_true", help="pause for a row-3 approval decision after each unapproved parent audit")
     parser.add_argument("--copy-workers", type=int, default=3, help="concurrent child copies (default: 3)")
-    parser.add_argument("--browser", choices=("chromium", "firefox"), default="chromium")
+    parser.add_argument("--browser", choices=("firefox",), default="firefox")
     parser.add_argument("--user-data-dir", help="persistent Playwright profile for Firefox")
     parser.add_argument("--sheet", choices=sorted(SHEET_HOSTS), help="sheet containing the child")
     parser.add_argument("--child-site", help="AEM site code from row 8, e.g. africa_en")
@@ -93,14 +97,34 @@ def configure_output():
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
+def wait_for_workbook(path):
+    while True:
+        try:
+            with open(path, "r+b"):
+                return
+        except PermissionError:
+            print("WORKBOOK LOCKED: Close the .xlsx in Excel, then press Enter to retry.", flush=True)
+            input()
+
+
+def save_workbook(wb, path):
+    while True:
+        try:
+            wb.save(path)
+            return
+        except PermissionError:
+            print("WORKBOOK LOCKED: Close the .xlsx in Excel, then press Enter to retry.", flush=True)
+            input()
+
+
 def run_all(wb, args):
-    browser = getattr(args, "browser", "chromium")
+    browser = getattr(args, "browser", "firefox")
     user_data_dir = getattr(args, "user_data_dir", None)
+    if (args.review or args.apply) and getattr(args, "workbook", None):
+        wait_for_workbook(args.workbook)
     bridge = FirefoxBridge(user_data_dir) if browser == "firefox" else None
     if bridge:
         bridge.start()
-        print("SERVER SETUP READY", flush=True)
-        input("Press Enter after AEM Support is open for Global, Europe, and America: ")
     parents = []
     children = []
     for ws in wb.worksheets:
@@ -119,11 +143,13 @@ def run_all(wb, args):
 
     baselines = {}
     findings = 0
+    ui("start", parents=len(parents), children=len(children), child_sites=[ws.cell(8, col).value for ws, col, _ in children])
     for index, (ws, col) in enumerate(parents, 1):
         site = ws.cell(8, col).value
+        link = editor_url(host_for(ws, ws.title), site, base_path(ws), ws.cell(13, col).value)
+        ui("parent", index=index, total=len(parents), sheet=ws.title, site=site, link=link, status="auditing")
         print(f"PROGRESS parent {index}/{len(parents)} {ws.title}/{site}", flush=True)
         try:
-            link = editor_url(host_for(ws, ws.title), site, base_path(ws), ws.cell(13, col).value)
             audit = audit_page(host_for(ws, ws.title), article_path(ws, col), link if args.review and not ws.cell(3, col).value else "", browser, user_data_dir, bridge)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError) as error:
             findings += 1
@@ -135,11 +161,14 @@ def run_all(wb, args):
                 lines = (error.stderr or error.stdout or str(error)).strip().splitlines()
                 detail = lines[-1] if lines else str(error)
             print(f"FINDING {ws.title}/{site}: audit failed: {detail}", flush=True)
+            ui("parent", index=index, total=len(parents), sheet=ws.title, site=site, link=link, status="error", findings=[detail])
             continue
         baseline = baselines.setdefault(ws.title, audit)
-        for finding in audit_findings(audit, baseline):
+        page_findings = audit_findings(audit, baseline)
+        for finding in page_findings:
             findings += 1
             print(f"FINDING {ws.title}/{site}: {finding}", flush=True)
+        ui("parent", index=index, total=len(parents), sheet=ws.title, site=site, link=link, status="approved" if ws.cell(3, col).value else "qa done", findings=page_findings)
         if args.review and not ws.cell(3, col).value:
             review_parent(wb, args.workbook, ws, col)
 
@@ -152,11 +181,14 @@ def run_all(wb, args):
             parent = ws.cell(8, parent_col).value if parent_col else "?"
             if not args.apply:
                 print(f"COPY PLAN {index}/{len(children)} {ws.title}/{parent} -> {child}", flush=True)
+                ui("child", index=index, total=len(children), sheet=ws.title, site=child, status="not copied")
                 continue
             if not parent_col or not ws.cell(3, parent_col).value:
                 print(f"COPY SKIP {ws.title}/{parent} -> {child}: parent is not row-3 approved", flush=True)
+                ui("child", index=index, total=len(children), sheet=ws.title, site=child, status="not copied")
                 continue
             print(f"PROGRESS copy {index}/{len(children)} {ws.title}/{parent} -> {child}", flush=True)
+            ui("child", index=index, total=len(children), sheet=ws.title, site=child, status="copying")
             copy_jobs[executor.submit(copy_child, ws, ws.title, parent_col, child_col, browser, user_data_dir, bridge)] = (ws, child_col, parent, child)
 
         for future in as_completed(copy_jobs):
@@ -165,11 +197,13 @@ def run_all(wb, args):
                 future.result()
             except subprocess.CalledProcessError as error:
                 print(f"COPY ERROR {ws.title}/{parent} -> {child}: {error}", flush=True)
+                ui("child", sheet=ws.title, site=child, status="error", error=str(error))
                 continue
             ws.cell(3, child_col).value = editor_url(host_for(ws, ws.title), child, base_path(ws), ws.cell(13, child_col).value)
             copied += 1
-            wb.save(args.workbook)
+            save_workbook(wb, args.workbook)
             print(f"COPY DONE {ws.title}/{parent} -> {child}", flush=True)
+            ui("child", sheet=ws.title, site=child, status="copied")
     if bridge:
         bridge.close()
     print(f"SUMMARY parents={len(parents)} findings={findings} children={len(children)} copied={copied}", flush=True)
@@ -182,10 +216,12 @@ def review_parent(wb, workbook_path, ws, col):
     approved, note = review_answer(input("REVIEW RESPONSE y|n [note]: "))
     if approved:
         ws.cell(3, col).value = link
-        wb.save(workbook_path)
+        save_workbook(wb, workbook_path)
         print(f"REVIEW APPROVED {ws.title}/{site}", flush=True)
+        ui("parent", sheet=ws.title, site=site, link=link, status="approved", findings=[])
     else:
         print(f"REVIEW SKIPPED {ws.title}/{site}" + (f": {note}" if note else ""), flush=True)
+        ui("parent", sheet=ws.title, site=site, link=link, status="not approved", findings=[note] if note else [])
 
 
 def review_answer(value):
@@ -193,14 +229,12 @@ def review_answer(value):
     return choice.lower() == "y", note.strip()
 
 
-def audit_page(host, path, editor_link="", browser="chromium", user_data_dir=None, bridge=None):
+def audit_page(host, path, editor_link="", browser="firefox", user_data_dir=None, bridge=None):
     if bridge:
         return bridge.request("audit", host=host, path=path, editorUrl=editor_link)
     cmd = ["node", str(NODE_AUDIT), "--host", host, "--path", path]
     if editor_link:
         cmd += ["--editor-url", editor_link]
-    if browser != "chromium":
-        cmd += ["--browser", browser]
     if user_data_dir:
         cmd += ["--user-data-dir", user_data_dir]
     result = subprocess.run(
@@ -292,7 +326,7 @@ def article_path(ws, col):
     return f"/content/samsung/{ws.cell(8, col).value}{base_path(ws)}{ws.cell(13, col).value}"
 
 
-def copy_child(ws, sheet, parent, target, browser="chromium", user_data_dir=None, bridge=None):
+def copy_child(ws, sheet, parent, target, browser="firefox", user_data_dir=None, bridge=None):
     host = host_for(ws, sheet)
     source_path = article_path(ws, parent).removeprefix("/content/samsung") + "/"
     destination_path = article_path(ws, target).removeprefix("/content/samsung") + "/"
@@ -303,8 +337,6 @@ def copy_child(ws, sheet, parent, target, browser="chromium", user_data_dir=None
         "--source-path", source_path, "--destination-path", destination_path,
         "--site-code", ws.cell(8, target).value, "--slug", ws.cell(13, target).value,
     ]
-    if browser != "chromium":
-        cmd += ["--browser", browser]
     if user_data_dir:
         cmd += ["--user-data-dir", user_data_dir]
     cmd.append("--apply")

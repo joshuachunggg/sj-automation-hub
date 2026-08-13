@@ -11,6 +11,11 @@ from sheet_io import find_columns
 
 
 class LiveMonitorTest(unittest.TestCase):
+    def test_open_tab_reuses_firefox_start_tab(self):
+        blank = SimpleNamespace(url="about:blank")
+        context = SimpleNamespace(pages=[blank])
+        self.assertIs(asyncio.run(main._open_tab(context)), blank)
+
     def test_releases_worker_slot(self):
         log = io.StringIO()
         monitor = LiveMonitor(2, log)

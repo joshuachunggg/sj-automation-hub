@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { openAemBrowser } from './aem_browser.mjs';
+import { openAemBrowser, openTab } from './aem_browser.mjs';
 
 const args = new Map(process.argv.slice(2).reduce((pairs, value, index, all) => {
   if (value.startsWith('--')) pairs.push([value.slice(2), all[index + 1]]);
@@ -14,11 +14,7 @@ main().catch((error) => {
 async function main() {
   const host = required('host');
   const path = required('path');
-  const { context, close } = await openAemBrowser({
-    browserName: args.get('browser') || 'chromium',
-    cdp: process.env.CDP || 'http://127.0.0.1:9223',
-    userDataDir: args.get('user-data-dir'),
-  });
+  const { context, close } = await openAemBrowser({ userDataDir: args.get('user-data-dir') });
   const page = await reviewPage(context);
   const response = await page.goto(`${host}${path}.infinity.json`, { waitUntil: 'domcontentloaded' });
   if (!response?.ok()) throw new Error(`Could not read ${path}: ${response?.status() || 'no response'}`);
@@ -41,7 +37,7 @@ async function reviewPage(context) {
   for (const page of context.pages()) {
     if (await page.evaluate(() => window.name === 'aem-faq-review').catch(() => false)) return page;
   }
-  const page = await context.newPage();
+  const page = await openTab(context);
   await page.evaluate(() => { window.name = 'aem-faq-review'; });
   return page;
 }

@@ -23,10 +23,9 @@ async def dismiss_jira_notice(page):
 
 
 async def ensure_logged_in(page):
-    """Call before + during a run. Raises if Jira shows a login form (session.json stale)."""
+    """Call before + during a run. Raises when shared Firefox SSO expires."""
     if await page.locator('text="Log in"').is_visible():
         raise SessionExpiredError(
             "Jira session expired (found a 'Log in' element on page). "
-            "Re-run auth_login.py to redo the manual SSO login, then retry this script."
+            "Samsung SSO session expired. Use Sign in in the Automation Hub, then retry."
         )
-

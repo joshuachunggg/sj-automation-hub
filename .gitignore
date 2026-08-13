@@ -2,6 +2,7 @@ __pycache__/
 .DS_Store
 run_log_*.txt
 logs/
+.firefox-profile/
 node_modules/
 .venv/
 .env
