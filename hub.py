@@ -189,7 +189,7 @@ def aem_faq_qa():
     args.append("--all")
     args += aem_browser_args(browser)
     args += ["--review", "--apply"]
-    run_logged("AEM FAQ QA Full Pass", args, review=True, env=load_env() if browser == "firefox" else None)
+    run_logged("AEM FAQ QA Full Pass", args, review=True, env=load_env() if browser == "firefox" else None, mfa=browser == "firefox")
 
 
 def logs():

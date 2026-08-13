@@ -39,6 +39,16 @@ class DotenvTest(unittest.TestCase):
             ["--browser", "firefox", "--user-data-dir", str(hub.FIREFOX_PROFILE)],
         )
 
+    def test_firefox_finalize_enables_setup_handoff(self):
+        with patch.object(hub, "aem_browser", return_value="firefox"), \
+             patch.object(hub, "panel", return_value=True), \
+             patch.object(hub, "ask_path", return_value=Path("workbook.xlsx")), \
+             patch.object(hub, "menu", return_value="review"), \
+             patch.object(hub, "confirm", return_value=True), \
+             patch.object(hub, "run_logged") as run:
+            hub.aem_faq_qa()
+        self.assertTrue(run.call_args.kwargs["mfa"])
+
     def test_faq_login_returns_directly_to_qa_after_success(self):
         with patch.object(hub, "use_existing_dev_chrome", return_value=False), \
              patch.object(hub, "dev_chrome_ready", return_value=True), \
