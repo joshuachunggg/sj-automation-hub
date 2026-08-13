@@ -31,7 +31,10 @@ async function audit({ host, path, editorUrl }) {
     const grid = JSON.parse(await page.locator('body').innerText())?.['jcr:content']?.root?.responsivegrid?.responsivegrid;
     if (!grid) throw new Error(`No FAQ component grid at ${path}`);
     if (editorUrl) {
-      await page.goto(editorUrl, { waitUntil: 'domcontentloaded' });
+      const response = await page.goto(editorUrl, { waitUntil: 'domcontentloaded' });
+      if (!response?.ok() || !new URL(page.url()).pathname.startsWith('/editor.html/')) {
+        throw new Error(`Could not open AEM editor: ${response?.status() || 'non-editor page'}`);
+      }
       await page.bringToFront();
     }
     return { components: Object.values(grid).filter(node => node && typeof node === 'object' && node['sling:resourceType']).map(node => ({ type: node['sling:resourceType'], settings: settings(node), text: textValues(node) })) };

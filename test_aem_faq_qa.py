@@ -149,6 +149,16 @@ class AemFaqQaTest(unittest.TestCase):
         with patch("aem_faq_qa.audit_page", side_effect=__import__("subprocess").TimeoutExpired(["node"], 60)):
             run_all(wb, args)
 
+    def test_bad_firefox_editor_page_does_not_stop_the_pass(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Global"
+        ws.cell(8, 2).value = "sg"
+        ws.cell(13, 2).value = "example"
+        args = SimpleNamespace(apply=False, review=True, copy_workers=1)
+        with patch("aem_faq_qa.audit_page", side_effect=RuntimeError("Could not open AEM editor: 404")):
+            run_all(wb, args)
+
 
 if __name__ == "__main__":
     unittest.main()

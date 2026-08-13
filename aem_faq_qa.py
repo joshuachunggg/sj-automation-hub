@@ -125,10 +125,12 @@ def run_all(wb, args):
         try:
             link = editor_url(host_for(ws, ws.title), site, base_path(ws), ws.cell(13, col).value)
             audit = audit_page(host_for(ws, ws.title), article_path(ws, col), link if args.review and not ws.cell(3, col).value else "", browser, user_data_dir, bridge)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError) as error:
             findings += 1
             if isinstance(error, subprocess.TimeoutExpired):
                 detail = f"audit timed out after {error.timeout}s"
+            elif isinstance(error, RuntimeError):
+                detail = str(error)
             else:
                 lines = (error.stderr or error.stdout or str(error)).strip().splitlines()
                 detail = lines[-1] if lines else str(error)
