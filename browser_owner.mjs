@@ -101,7 +101,16 @@ async function copy({ host, sourcePath, destinationPath, siteCode, slug }) {
     return true;
   } finally { await closeTab(context, page); }
 }
-async function publish({ siteCode, slug }) {
+async function publish(request) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try { return await publishOnce(request); }
+    catch (error) {
+      if (attempt === 3 || !transientBrowserError(error)) throw error;
+      await new Promise(resolve => setTimeout(resolve, attempt * 750));
+    }
+  }
+}
+async function publishOnce({ siteCode, slug }) {
   const page = await openTab(context);
   try {
     await page.goto('https://jira.secext.samsung.net/', { waitUntil: 'domcontentloaded' });
@@ -163,17 +172,23 @@ async function uiClick(locator) {
 }
 async function confirm(page, name, success = null) {
   const dialog = page.locator('section[role="dialog"]').filter({ has: page.getByRole('heading', { name, exact: true }) });
-  const button = dialog.locator('#issue-workflow-transition-submit');
-  await button.waitFor({ state: 'visible', timeout: 20000 });
-  for (let i = 0; i < 6; i++) {
-    await uiClick(button).catch(() => {});
-    if (await dialog.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true).catch(() => false)) return;
-    if (success && i >= 2 && await success()) return;
-  }
-  if (!success || !await success()) throw new Error(`Clicked '${name}' 6 times, but its modal never closed.`);
+  await dialog.locator('#issue-workflow-transition-submit').waitFor({ state: 'visible', timeout: 20000 });
+  const result = await page.evaluate(async () => {
+    const form = document.querySelector('#issue-workflow-transition');
+    const submit = document.querySelector('#issue-workflow-transition-submit');
+    if (!form || !submit) throw new Error('Jira workflow form is missing.');
+    const body = new URLSearchParams(new FormData(form));
+    body.append(submit.name, submit.value);
+    const response = await fetch(form.action, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body });
+    return { ok: response.ok, status: response.status };
+  });
+  if (!result.ok) throw new Error(`Jira '${name}' transition failed: HTTP ${result.status}`);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  if (success) await success();
 }
 function escapeRe(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function exactSlug(text, slug) { return new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(slug)}($|[^A-Za-z0-9_-])`).test(text); }
+function transientBrowserError(error) { return /(detached from the DOM|Timeout .*exceeded|Navigation|net::ERR|Target page, context or browser has been closed)/i.test(String(error)); }
 async function post(page, url, fields) {
   await page.goto(`${new URL(url).origin}/libs/granite/csrf/token.json`, { waitUntil: 'domcontentloaded' });
   await page.evaluate(async ({ url, fields }) => { const r = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: new URLSearchParams(fields) }); if (!r.ok) throw new Error(`${r.status} ${await r.text()}`); }, { url, fields });
