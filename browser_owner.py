@@ -14,6 +14,7 @@ def request(action, **values):
                 raise RuntimeError("Firefox is still starting. Close Firefox, restart the Hub, then try Sign in again.")
             time.sleep(1)
     with conn:
+        conn.settimeout(300)
         conn.sendall((json.dumps({"action": action, **values}) + "\n").encode())
         reply = json.loads(conn.makefile(encoding="utf-8").readline())
     if not reply.get("ok"):

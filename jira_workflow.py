@@ -15,7 +15,7 @@ async def _screenshot(page, col, description):
 async def _click_or_report(page, locator, description, col):
     """Wait for locator, click it. On any failure: screenshot + raise with expected-vs-context."""
     try:
-        await locator.wait_for(state="visible", timeout=8000)
+        await locator.wait_for(state="visible", timeout=20000)
         await page.wait_for_timeout(1000)  # settle buffer after detection, in case of site lag
         await locator.click()
     except Exception as e:
@@ -42,14 +42,14 @@ def _production_dropdown(page):
 async def _is_in_production(page):
     """True after Start AEM Workflow has advanced the ticket to PRODUCTION."""
     try:
-        await _production_dropdown(page).wait_for(state="visible", timeout=3000)
+        await _production_dropdown(page).wait_for(state="visible", timeout=10000)
         return True
     except Exception:
         return False
 
 
 async def _submit_and_wait_close(page, confirm_locator, modal_heading, description, col,
-                                 retries=6, poll_ms=2500, success_check=None):
+                                 retries=6, poll_ms=5000, success_check=None):
     """
     Click confirm_locator; verify modal_heading actually goes away (the signal that the
     submit registered), retrying the click if it doesn't - instead of guessing a fixed delay.
@@ -62,7 +62,7 @@ async def _submit_and_wait_close(page, confirm_locator, modal_heading, descripti
     before giving up.
     """
     try:
-        await confirm_locator.wait_for(state="visible", timeout=8000)
+        await confirm_locator.wait_for(state="visible", timeout=20000)
         await page.wait_for_timeout(1000)  # settle buffer after detection, in case of site lag
     except Exception as e:
         shot = await _screenshot(page, col, description)
@@ -217,4 +217,3 @@ async def process_column(page, col, status=lambda _: None):
     )
 
     return "done"
-

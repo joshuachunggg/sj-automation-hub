@@ -7,7 +7,7 @@ logging.disable(logging.CRITICAL)
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-from aem_faq_qa import FirefoxBridge, audit_findings, audit_page, column_kind, configure_output, detail_ids, language_findings, parent_for_child, parse_args, review_answer, review_parent, run_all, save_workbook, text_findings
+from aem_faq_qa import FirefoxBridge, audit_findings, audit_page, child_exists, column_kind, configure_output, detail_ids, language_findings, parent_for_child, parse_args, retry_failed_copies, review_answer, review_parent, run_all, save_workbook, text_findings
 
 
 class AemFaqQaTest(unittest.TestCase):
@@ -144,6 +144,26 @@ class AemFaqQaTest(unittest.TestCase):
         args = SimpleNamespace(apply=False, review=True, copy_workers=1, browser=None)
         with patch("aem_faq_qa.audit_page", side_effect=RuntimeError("Could not open AEM editor: 404")):
             run_all(wb, args)
+
+    def test_retry_only_copies_children_without_row_3_links(self):
+        wb = Workbook(); ws = wb.active; ws.title = "Global"
+        ws.cell(6, 2).value = "/sg/support/mobile-devices/example"
+        for col, site, color, link in ((2, "sg", "FFFFFF00", "parent"), (3, "ca", "FFFCE5CD", ""), (4, "uk", "FFFCE5CD", "done")):
+            ws.cell(8, col).value = site; ws.cell(13, col).value = "example"; ws.cell(3, col).value = link; ws.cell(11, col).fill = PatternFill("solid", fgColor=color)
+        args = SimpleNamespace(workbook="workbook.xlsx", user_data_dir=None)
+        with patch("aem_faq_qa.wait_for_workbook"), patch("aem_faq_qa.FirefoxBridge"), patch("aem_faq_qa.child_exists", return_value=False), patch("aem_faq_qa.copy_child") as copy, patch("aem_faq_qa.save_workbook"):
+            retry_failed_copies(wb, args)
+        self.assertEqual(copy.call_args.args[3], 3)
+
+    def test_retry_checkpoints_an_existing_child_without_copying(self):
+        wb = Workbook(); ws = wb.active; ws.title = "Global"
+        for col, site, color, link in ((2, "sg", "FFFFFF00", "parent"), (3, "ca", "FFFCE5CD", "")):
+            ws.cell(6, col).value = "/sg/support/mobile-devices/example"; ws.cell(8, col).value = site; ws.cell(13, col).value = "example"; ws.cell(3, col).value = link; ws.cell(11, col).fill = PatternFill("solid", fgColor=color)
+        args = SimpleNamespace(workbook="workbook.xlsx", user_data_dir=None)
+        with patch("aem_faq_qa.wait_for_workbook"), patch("aem_faq_qa.FirefoxBridge"), patch("aem_faq_qa.child_exists", return_value=True), patch("aem_faq_qa.copy_child") as copy, patch("aem_faq_qa.save_workbook"):
+            retry_failed_copies(wb, args)
+        copy.assert_not_called()
+        self.assertTrue(ws.cell(3, 3).value)
 
 
 if __name__ == "__main__":
