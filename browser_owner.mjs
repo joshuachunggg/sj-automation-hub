@@ -5,9 +5,10 @@ import { openTab, closeTab } from './aem_browser.mjs';
 
 const profile = process.env.AEM_PROFILE || '.firefox-profile';
 const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).map(line => line.split(/=(.*)/s)).filter(([k]) => k));
-const context = await firefox.launchPersistentContext(profile, { headless: false, args: ['--allow-downgrade'], firefoxUserPrefs: { 'browser.link.open_newwindow': 3, 'browser.link.open_newwindow.restriction': 0 } });
+const context = await firefox.launchPersistentContext(profile, { headless: false, slowMo: 100, args: ['--allow-downgrade'], firefoxUserPrefs: { 'browser.link.open_newwindow': 3, 'browser.link.open_newwindow.restriction': 0 } });
 let home = context.pages()[0] || await context.newPage(), reviewPage;
 let finishLogin = () => {};
+let clicking = Promise.resolve();
 const server = net.createServer(socket => {
   let text = '';
   socket.on('data', async chunk => {
@@ -106,7 +107,7 @@ async function publish({ siteCode, slug }) {
   try {
     await page.goto('https://jira.secext.samsung.net/', { waitUntil: 'domcontentloaded' });
     await dismissNotice(page);
-    await (await ensureJiraLogin(page)).click();
+    await uiClick(await ensureJiraLogin(page));
     const search = page.getByRole('textbox', { name: 'Contains text' });
     await search.fill(`${siteCode} ${slug}`);
     await search.press('Enter');
@@ -120,15 +121,15 @@ async function publish({ siteCode, slug }) {
     for (let i = 0; i < await rows.count(); i++) if (exactSlug(await rows.nth(i).innerText(), slug)) matches.push(rows.nth(i));
     if (!matches.length) return 'not_found';
     if (matches.length !== 1) return 'ambiguous';
-    await matches[0].click(); await page.waitForLoadState('networkidle');
+    await uiClick(matches[0]); await page.waitForLoadState('networkidle');
     if (await isLive(page)) return 'done';
     if (!await production(page).isVisible().catch(() => false)) {
-      await page.getByRole('button', { name: 'New Request' }).click();
-      await page.getByRole('menuitem').filter({ hasText: 'Start AEM Workflow' }).click();
+      await uiClick(page.getByRole('button', { name: 'New Request' }));
+      await uiClick(page.getByRole('menuitem').filter({ hasText: 'Start AEM Workflow' }));
       await confirm(page, 'Start AEM Workflow');
     }
-    await production(page).click();
-    await page.getByRole('menuitem').filter({ hasText: 'Go To Live' }).click();
+    await uiClick(production(page));
+    await uiClick(page.getByRole('menuitem').filter({ hasText: 'Go To Live' }));
     await confirm(page, 'Go To Live', () => isLive(page));
     return 'done';
   } finally { await closeTab(context, page); }
@@ -156,12 +157,21 @@ async function ensureJiraLogin(page) {
 }
 function production(page) { return page.locator('#opsbar-transitions_more').filter({ hasText: /\bPRODUCTION\b/i }); }
 async function isLive(page) { const label = page.locator('#opsbar-transitions_more .dropdown-text'); return await label.isVisible().catch(() => false) && (await label.innerText()).trim().toUpperCase() === 'LIVE'; }
+function uiClick(locator) {
+  const click = clicking.then(async () => {
+    await locator.waitFor({ state: 'visible', timeout: 20000 });
+    await locator.click();
+    await new Promise(resolve => setTimeout(resolve, 300));
+  });
+  clicking = click.catch(() => {});
+  return click;
+}
 async function confirm(page, name, success = null) {
   const dialog = page.locator('section[role="dialog"]').filter({ has: page.getByRole('heading', { name, exact: true }) });
   const button = dialog.locator('#issue-workflow-transition-submit');
   await button.waitFor({ state: 'visible', timeout: 20000 });
   for (let i = 0; i < 6; i++) {
-    await button.click().catch(() => {});
+    await uiClick(button).catch(() => {});
     if (await dialog.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true).catch(() => false)) return;
     if (success && i >= 2 && await success()) return;
   }
