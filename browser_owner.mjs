@@ -38,26 +38,18 @@ async function login() {
   await home.goto('https://wds.samsung.com/wds/sso/login/forwardLogin.do', { waitUntil: 'domcontentloaded' });
   const support = home.getByRole('link', { name: 'Support' }).first();
   if (await support.isVisible().catch(() => false)) return 'WMC home ready';
-  for (let retry = 0; retry < 30; retry++) {
-    if (await support.isVisible().catch(() => false)) return 'WMC home ready';
-    await waitForLoginModal();
-    await home.getByRole('row', { name: 'To login, please click on' }).getByRole('link').click({ timeout: 1000 }).catch(() => {});
-    await home.locator('#loginButton').click({ timeout: 1000 }).catch(() => {});
-    const email = home.getByRole('textbox', { name: 'Login ID (e-mail)' });
-    if (await email.isVisible().catch(() => false)) {
-      await email.fill(process.env.WMC_USERNAME || env.WMC_USERNAME);
-      await home.getByRole('textbox', { name: 'Password' }).fill(process.env.WMC_PASSWORD || env.WMC_PASSWORD);
-      await home.getByRole('button', { name: 'Sign In', exact: true }).click();
-      break;
-    }
-    await home.waitForTimeout(1000);
+  await home.locator('div').filter({ hasText: 'close' }).nth(2).click({ timeout: 2000 }).catch(() => {});
+  const email = home.getByRole('textbox', { name: 'Login ID (e-mail)' });
+  if (!await email.isVisible().catch(() => false)) {
+    await home.getByRole('row', { name: 'To login, please click on' }).getByRole('link').click();
+    await home.locator('#loginButton').click();
   }
+  await email.waitFor({ state: 'visible', timeout: 30000 });
+  await email.fill(process.env.WMC_USERNAME || env.WMC_USERNAME);
+  await home.getByRole('textbox', { name: 'Password' }).fill(process.env.WMC_PASSWORD || env.WMC_PASSWORD);
+  await home.getByRole('button', { name: 'Sign In', exact: true }).click();
   await support.waitFor({ timeout: 300000 });
   return 'WMC home ready';
-}
-async function waitForLoginModal() {
-  const modal = home.locator('[role="dialog"]:visible').first();
-  if (await modal.count()) await modal.waitFor({ state: 'hidden', timeout: 300000 });
 }
 async function audit({ host, path, editorUrl }) {
   const page = editorUrl ? (!reviewPage || reviewPage.isClosed() ? reviewPage = await openTab(context) : reviewPage) : await openTab(context);
