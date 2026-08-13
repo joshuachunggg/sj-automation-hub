@@ -29,7 +29,13 @@ def wait_for_support(page):
             pass
         try:
             page.locator("div").filter(has_text="close").nth(2).click(timeout=1000)
+        except TimeoutError:
+            pass
+        try:
             page.get_by_role("row", name="To login, please click on").get_by_role("link").click(timeout=1000)
+        except TimeoutError:
+            pass
+        try:
             page.locator("#loginButton").click(timeout=1000)
         except TimeoutError:
             pass  # Already at a later SSO state, or a page error awaiting refresh.

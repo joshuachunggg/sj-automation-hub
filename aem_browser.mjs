@@ -15,3 +15,8 @@ export async function openAemBrowser({ userDataDir } = {}) {
 export async function openTab(context) {
   return context.pages().find((page) => page.url() === 'about:blank') || context.newPage();
 }
+
+export async function closeTab(context, page) {
+  if (context.pages().length === 1) await page.goto('about:blank');
+  else await page.close();
+}

@@ -195,7 +195,7 @@ def run_all(wb, args):
             ws, child_col, parent, child = copy_jobs[future]
             try:
                 future.result()
-            except subprocess.CalledProcessError as error:
+            except (subprocess.CalledProcessError, RuntimeError) as error:
                 print(f"COPY ERROR {ws.title}/{parent} -> {child}: {error}", flush=True)
                 ui("child", sheet=ws.title, site=child, status="error", error=str(error))
                 continue

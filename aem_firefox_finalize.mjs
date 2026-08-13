@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline';
-import { openAemBrowser, openTab } from './aem_browser.mjs';
+import { openAemBrowser, openTab, closeTab } from './aem_browser.mjs';
 
 const profile = process.argv[2];
 const { context, close } = await openAemBrowser({ userDataDir: profile });
@@ -36,7 +36,7 @@ async function audit({ host, path, editorUrl }) {
       await page.bringToFront();
     }
     return { components: Object.values(grid).filter(node => node && typeof node === 'object' && node['sling:resourceType']).map(node => ({ type: node['sling:resourceType'], settings: settings(node), text: textValues(node) })) };
-  } finally { if (page !== reviewPage) await page.close(); }
+  } finally { if (page !== reviewPage) await closeTab(context, page); }
 }
 
 async function copy({ host, sourcePath, destinationPath, siteCode, slug }) {
@@ -52,7 +52,7 @@ async function copy({ host, sourcePath, destinationPath, siteCode, slug }) {
     await post(page, `${host}/sim/support/helpcontentmgmt/v6/copy`, fields);
     await post(page, `${host}/sim/core/workflow/v6/updatewfcodeaftersave`, { ...fields, requestUserId: '', contentId: fields.contentId });
     return true;
-  } finally { await page.close(); }
+  } finally { await closeTab(context, page); }
 }
 
 async function post(page, url, fields) {
