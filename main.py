@@ -179,7 +179,7 @@ async def _wait_for_live(context, col, semaphore, monitor, wb):
 async def run_publish(pending, wb, log, workers, monitor):
     not_found, ambiguous, errored = [], [], []
     async with async_playwright() as p:
-        context = await p.firefox.launch_persistent_context(str(FIREFOX_PROFILE), headless=False, slow_mo=100)
+        context = await p.firefox.launch_persistent_context(str(FIREFOX_PROFILE), headless=False, slow_mo=100, args=["--allow-downgrade"])
         try:
             probe = await _open_tab(context)
             await probe.goto(JIRA_BASE_URL, wait_until="domcontentloaded")

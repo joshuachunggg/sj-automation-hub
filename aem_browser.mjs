@@ -5,7 +5,10 @@ import { dirname, join } from 'node:path';
 const profile = join(dirname(fileURLToPath(import.meta.url)), '.firefox-profile');
 
 export async function openAemBrowser({ userDataDir } = {}) {
-  const context = await firefox.launchPersistentContext(userDataDir || process.env.AEM_PROFILE || profile, { headless: false });
+  const context = await firefox.launchPersistentContext(userDataDir || process.env.AEM_PROFILE || profile, {
+    headless: false,
+    args: ['--allow-downgrade'],
+  });
   return { context, close: () => context.close() };
 }
 
