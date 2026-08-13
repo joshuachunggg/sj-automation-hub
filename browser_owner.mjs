@@ -31,13 +31,18 @@ async function login() {
   await home.goto('https://wds.samsung.com/wds/sso/login/forwardLogin.do', { waitUntil: 'domcontentloaded' });
   const support = home.getByRole('link', { name: 'Support' }).first();
   if (await support.isVisible().catch(() => false)) return 'WMC home ready';
-  await home.getByRole('row', { name: 'To login, please click on' }).getByRole('link').click().catch(() => {});
-  await home.locator('#loginButton').click().catch(() => {});
-  const email = home.getByRole('textbox', { name: 'Login ID (e-mail)' });
-  if (await email.isVisible().catch(() => false)) {
-    await email.fill(process.env.WMC_USERNAME || env.WMC_USERNAME);
-    await home.getByRole('textbox', { name: 'Password' }).fill(process.env.WMC_PASSWORD || env.WMC_PASSWORD);
-    await home.getByRole('button', { name: 'Sign In', exact: true }).click();
+  for (let retry = 0; retry < 30; retry++) {
+    if (await support.isVisible().catch(() => false)) return 'WMC home ready';
+    await home.getByRole('row', { name: 'To login, please click on' }).getByRole('link').click({ timeout: 1000 }).catch(() => {});
+    await home.locator('#loginButton').click({ timeout: 1000 }).catch(() => {});
+    const email = home.getByRole('textbox', { name: 'Login ID (e-mail)' });
+    if (await email.isVisible().catch(() => false)) {
+      await email.fill(process.env.WMC_USERNAME || env.WMC_USERNAME);
+      await home.getByRole('textbox', { name: 'Password' }).fill(process.env.WMC_PASSWORD || env.WMC_PASSWORD);
+      await home.getByRole('button', { name: 'Sign In', exact: true }).click();
+      break;
+    }
+    await home.waitForTimeout(1000);
   }
   await support.waitFor({ timeout: 300000 });
   return 'WMC home ready';
