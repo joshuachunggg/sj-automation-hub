@@ -124,7 +124,6 @@ async def _fallback_slug_search(page, col):
     then Ctrl+F-equivalent for the site code (bare word, or "[site_code]") across up to 2 pages.
     """
     search_box = page.locator("#quickSearchInput")
-    await search_box.click()
     await search_box.fill(col.url_title)
     await search_box.press("Enter")
     await page.wait_for_load_state("networkidle")
@@ -164,7 +163,6 @@ async def process_column(page, col, transition_lock, status=lambda _: None):
         raise RuntimeError("Jira ticket navigation has no URL.")
     await page.goto(urljoin(page.url, tickets_url), wait_until="domcontentloaded")
     search_box = page.get_by_role("textbox", name="Contains text")
-    await search_box.click()
     await search_box.fill(f"{col.site_code} {col.url_title}")
     await search_box.press("Enter")
     await page.wait_for_load_state("networkidle")

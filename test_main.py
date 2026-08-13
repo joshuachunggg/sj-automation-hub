@@ -67,6 +67,10 @@ class LiveMonitorTest(unittest.TestCase):
         self.assertIn("transition_lock = asyncio.Lock()", source)
         self.assertIn("_publish_one(context, col, semaphore, transition_lock, monitor)", source)
 
+    def test_firefox_publish_defaults_to_one_worker(self):
+        with patch("sys.argv", ["main.py", "--workbook", "workbook.xlsx"]):
+            self.assertEqual(main.parse_args().workers, 1)
+
     def test_monitor_marks_skipped_countries_as_not_processed(self):
         monitor = LiveMonitor(1, io.StringIO())
         with patch("builtins.print") as print_:

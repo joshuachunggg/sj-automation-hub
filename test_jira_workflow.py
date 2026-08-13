@@ -17,6 +17,7 @@ class ExactSlugTest(unittest.TestCase):
         self.assertIn("tickets_url = await tickets.get_attribute", source)
         self.assertIn("issue_url = await ticket.get_attribute", source)
         self.assertIn("async with transition_lock:", source)
+        self.assertNotIn("await search_box.click()", source)
 
 
 class ProductionStateTest(unittest.IsolatedAsyncioTestCase):

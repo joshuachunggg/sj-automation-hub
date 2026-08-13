@@ -20,7 +20,7 @@ def parse_args():
     p.add_argument("--col", help="only process this column letter, e.g. AR (test mode)")
     p.add_argument("--start-sheet", help="resume run starting at this sheet")
     p.add_argument("--start-col", help="resume run starting at this column letter (needs --start-sheet)")
-    p.add_argument("--workers", type=int, default=10, help="parallel Jira pages (1-15, default: 10)")
+    p.add_argument("--workers", type=int, default=1, help="parallel Jira pages (1-15, default: 1)")
     p.add_argument("--skip-country", action="append", default=[], help="country code to exclude; repeat or separate with commas")
     p.add_argument(
         "--validate-only", action="store_true",
