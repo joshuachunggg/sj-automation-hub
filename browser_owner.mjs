@@ -29,7 +29,7 @@ async function handle(request) {
   throw new Error(`Unknown browser action: ${request.action}`);
 }
 async function openEditor(url) {
-  reviewPage = !reviewPage || reviewPage.isClosed() ? await openTab(context) : reviewPage;
+  reviewPage = await context.newPage();
   await reviewPage.goto(url, { waitUntil: 'domcontentloaded' });
   await reviewPage.bringToFront();
   return true;
