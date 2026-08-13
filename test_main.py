@@ -47,10 +47,10 @@ class LiveMonitorTest(unittest.TestCase):
     def test_skip_countries_accepts_commas_repeats_and_case(self):
         self.assertEqual(skipped_countries(["UK, ca", "SG"]), {"uk", "ca", "sg"})
 
-    def test_publish_uses_a_fresh_chromium_context_with_the_signed_in_session(self):
+    def test_publish_uses_a_fresh_firefox_context_with_the_signed_in_session(self):
         source = __import__("inspect").getsource(main.run_publish)
         self.assertIn('browser_request("storage_state")', source)
-        self.assertIn("playwright.chromium.launch", source)
+        self.assertIn("playwright.firefox.launch", source)
         self.assertIn("browser.new_context(storage_state=session)", source)
 
     def test_publish_checks_after_the_jira_phase(self):
@@ -67,9 +67,9 @@ class LiveMonitorTest(unittest.TestCase):
         self.assertIn("transition_lock = asyncio.Lock()", source)
         self.assertIn("_publish_one(context, col, semaphore, transition_lock, monitor)", source)
 
-    def test_publish_defaults_to_ten_workers(self):
+    def test_firefox_publish_defaults_to_one_worker(self):
         with patch("sys.argv", ["main.py", "--workbook", "workbook.xlsx"]):
-            self.assertEqual(main.parse_args().workers, 10)
+            self.assertEqual(main.parse_args().workers, 1)
 
     def test_monitor_marks_skipped_countries_as_not_processed(self):
         monitor = LiveMonitor(1, io.StringIO())
