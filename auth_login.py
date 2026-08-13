@@ -56,25 +56,6 @@ def wait_for_support(page):
         page.wait_for_timeout(3000)
 
 
-def open_support_servers(context, page, support):
-    """Visit every Support service exposed by the SSO home page."""
-    pages = []
-    for index in (0, 2, 3):  # The recorded SSO page has these three Support services.
-        if support.count() <= index:
-            continue
-        try:
-            with context.expect_page(timeout=10_000) as popup_info:
-                support.nth(index).click()
-            pages.append(popup_info.value)
-        except TimeoutError:
-            pages.append(page)  # This Support link reused the SSO tab.
-    for service in pages:
-        service.wait_for_load_state("domcontentloaded")
-    for service in pages:
-        if service is not page:
-            service.close()
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", default=str(FIREFOX_PROFILE))
@@ -83,8 +64,8 @@ def main():
         context = p.firefox.launch_persistent_context(args.profile, headless=False, args=["--allow-downgrade"])
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(SSO_LOGIN_URL, wait_until="domcontentloaded")
-        support = wait_for_support(page)
-        open_support_servers(context, page, support)
+        wait_for_support(page)
+        input("WMC home is ready. Finish Support links manually, then press Enter. ")
         context.close()
     print("Firefox session saved")
 
