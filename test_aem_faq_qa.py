@@ -117,10 +117,9 @@ class AemFaqQaTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 60)
 
     def test_firefox_bridge_reads_utf8(self):
-        process = SimpleNamespace(stdout=SimpleNamespace(readline=lambda: '{"ready": true}\n'))
-        with patch("aem_faq_qa.subprocess.Popen", return_value=process) as popen:
+        with patch("aem_faq_qa.browser_request", return_value=True) as request:
             FirefoxBridge("profile").start()
-        self.assertEqual(popen.call_args.kwargs["encoding"], "utf-8")
+        request.assert_called_once_with("done")
 
     def test_audit_timeout_does_not_stop_the_pass(self):
         wb = Workbook()

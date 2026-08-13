@@ -144,6 +144,7 @@ PAGE = r'''<!doctype html><meta name="viewport" content="width=device-width,init
 
 
 def main():
+    subprocess.Popen(["node", str(ROOT / "browser_owner.mjs")], cwd=ROOT, env={**os.environ, "AEM_PROFILE": str(PROFILE)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     server = ThreadingHTTPServer(("127.0.0.1", 8765), App)
     url = "http://127.0.0.1:8765"
     print(f"SJ Automation Hub: {url}")

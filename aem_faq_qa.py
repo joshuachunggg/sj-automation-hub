@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 logging.disable(logging.CRITICAL)
 from openpyxl import load_workbook
+from browser_owner import request as browser_request
 
 
 ROOT = Path(__file__).resolve().parent
@@ -349,27 +350,13 @@ class FirefoxBridge:
         self.process = None
 
     def start(self):
-        self.process = subprocess.Popen(
-            ["node", str(NODE_FIREFOX_FINALIZE), self.profile], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            text=True, encoding="utf-8", bufsize=1,
-        )
-        response = self._read()
-        if not response.get("ready"):
-            raise RuntimeError(response.get("error", "Firefox login failed"))
+        browser_request("done")
 
     def request(self, action, **values):
-        self.process.stdin.write(json.dumps({"action": action, **values}) + "\n")
-        self.process.stdin.flush()
-        response = self._read()
-        if not response.get("ok"):
-            raise RuntimeError(response.get("error", "Firefox request failed"))
-        return response.get("result")
+        return browser_request(action, **values)
 
     def close(self):
-        if self.process and self.process.poll() is None:
-            self.process.stdin.write('{"action":"close"}\n')
-            self.process.stdin.flush()
-            self.process.wait(timeout=10)
+        pass
 
     def _read(self):
         line = self.process.stdout.readline()
