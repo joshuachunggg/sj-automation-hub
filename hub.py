@@ -448,8 +448,8 @@ def server_setup_prompt(screen):
         clear_screen(screen)
         height, width = screen.getmaxyx()
         header(screen, "Prepare AEM Support servers")
-        screen.addnstr(5, 4, "Complete Samsung 2FA if prompted, then open Support for Global, Europe, and America.", width - 8, curses.color_pair(3))
-        screen.addnstr(7, 4, "Wait until all three AEM pages finish loading, then return here.", width - 8, curses.color_pair(6))
+        screen.addnstr(5, 4, "Log in to WMC, then open Support for Global, Europe, and America.", width - 8, curses.color_pair(3))
+        screen.addnstr(7, 4, "Press Enter here once logged in and all servers loaded.", width - 8, curses.color_pair(6))
         footer(screen, " Enter continue with FAQ QA  Esc cancel ")
         key = screen.getch()
         if key in (10, 13):

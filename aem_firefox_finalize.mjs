@@ -4,7 +4,7 @@ import { openAemBrowser } from './aem_browser.mjs';
 const profile = process.argv[2];
 const { context, close } = await openAemBrowser({ browserName: 'firefox', userDataDir: profile });
 const login = await context.newPage();
-await loginToWmc(login);
+await login.goto(process.env.WMC_LOGIN_URL || 'https://wds.samsung.com/wds/sso/login/forwardLogin.do', { waitUntil: 'domcontentloaded' });
 reply({ ready: true });
 
 createInterface({ input: process.stdin }).on('line', async (line) => {
@@ -21,23 +21,6 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
 });
 
 function reply(value) { process.stdout.write(`${JSON.stringify(value)}\n`); }
-
-async function loginToWmc(page) {
-  for (const name of ['WMC_LOGIN_URL', 'WMC_USERNAME', 'WMC_PASSWORD']) if (!process.env[name]) throw new Error(`Missing ${name} in .env`);
-  await page.goto(process.env.WMC_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-  const home = page.getByText(/^Hi,/).first();
-  const email = page.getByRole('textbox', { name: 'Login ID (e-mail)' });
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    if (await home.isVisible().catch(() => false)) return;
-    if (await email.isVisible().catch(() => false)) {
-      await email.fill(process.env.WMC_USERNAME);
-      await page.getByRole('textbox', { name: 'Password' }).fill(process.env.WMC_PASSWORD);
-      await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-    }
-    await page.waitForTimeout(250);
-  }
-  throw new Error('WMC did not finish login');
-}
 
 async function audit({ host, path, editorUrl }) {
   const page = await context.newPage();
