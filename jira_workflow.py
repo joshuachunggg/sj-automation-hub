@@ -161,7 +161,7 @@ async def _exact_slug_rows(rows, col):
     return exact
 
 
-async def process_column(page, col, transition_lock, status=lambda _: None):
+async def process_column(page, col, _transition_lock, status=lambda _: None):
     """
     col: TranslationColumn (sheet_name, col_idx, site_code, url_title, editor_url)
     Returns: "done" | "not_found" | "ambiguous"
@@ -195,45 +195,47 @@ async def process_column(page, col, transition_lock, status=lambda _: None):
     issue_url = await ticket.get_attribute("href")
     if not issue_url:
         raise RuntimeError("Jira search result has no issue URL.")
-    async with transition_lock:
-        await page.goto(urljoin(page.url, issue_url), wait_until="domcontentloaded")
+    await page.goto(urljoin(page.url, issue_url), wait_until="domcontentloaded")
 
-        # A previous attempt may have completed after its browser timed out.
-        if await _status_is_live(page):
-            status("already live")
-            return "done"
+    # A previous attempt may have completed after its browser timed out.
+    if await _status_is_live(page):
+        status("already live")
+        return "done"
 
-        state = await _workflow_state(page)
-        if state == "NEW REQUEST":
-            status("starting AEM workflow")
-            # Step 6: New Request -> Start AEM Workflow -> confirm
-            await _click_or_report(page, page.get_by_role("button", name="New Request"), "New Request button", col)
-            await _click_or_report(
-                page, page.get_by_role("menuitem").filter(has_text="Start AEM Workflow"),
-                "Start AEM Workflow menu item", col,
-            )
-            await _submit_and_wait_close(
-                page,
-                page.get_by_role("button", name="Start AEM Workflow", exact=True),
-                page.get_by_role("heading", name="Start AEM Workflow"),
-                "Start AEM Workflow confirm button", col,
-            )
-        elif state != "PRODUCTION":
-            raise RuntimeError(f"Unexpected Jira workflow state: {state or 'not loaded'}")
-
-        # Step 7: PRODUCTION -> Go To Live -> confirm
-        status("sending to live")
-        await _click_or_report(page, _production_dropdown(page), "PRODUCTION dropdown", col)
+    state = await _workflow_state(page)
+    if state == "LIVE":
+        status("already live")
+        return "done"
+    if state == "NEW REQUEST":
+        status("starting AEM workflow")
+        # Step 6: New Request -> Start AEM Workflow -> confirm
+        await _click_or_report(page, page.get_by_role("button", name="New Request"), "New Request button", col)
         await _click_or_report(
-            page, page.get_by_role("menuitem").filter(has_text="Go To Live"),
-            "Go To Live menu item", col,
+            page, page.get_by_role("menuitem").filter(has_text="Start AEM Workflow"),
+            "Start AEM Workflow menu item", col,
         )
         await _submit_and_wait_close(
             page,
-            page.get_by_role("button", name="Go To Live", exact=True),
-            page.get_by_role("heading", name="Go To Live"),
-            "Go To Live confirm button", col,
-            success_check=lambda: _status_is_live(page),
+            page.get_by_role("button", name="Start AEM Workflow", exact=True),
+            page.get_by_role("heading", name="Start AEM Workflow"),
+            "Start AEM Workflow confirm button", col,
         )
+    elif state != "PRODUCTION":
+        raise RuntimeError(f"Unexpected Jira workflow state: {state or 'not loaded'}")
+
+    # Step 7: PRODUCTION -> Go To Live -> confirm
+    status("sending to live")
+    await _click_or_report(page, _production_dropdown(page), "PRODUCTION dropdown", col)
+    await _click_or_report(
+        page, page.get_by_role("menuitem").filter(has_text="Go To Live"),
+        "Go To Live menu item", col,
+    )
+    await _submit_and_wait_close(
+        page,
+        page.get_by_role("button", name="Go To Live", exact=True),
+        page.get_by_role("heading", name="Go To Live"),
+        "Go To Live confirm button", col,
+        success_check=lambda: _status_is_live(page),
+    )
 
     return "done"

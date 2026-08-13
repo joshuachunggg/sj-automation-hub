@@ -11,12 +11,12 @@ class ExactSlugTest(unittest.TestCase):
         self.assertFalse(_has_exact_slug(f"[se] {slug}-after-update", slug))
         self.assertFalse(_has_exact_slug(f"[se] fix-{slug}", slug))
 
-    def test_workflow_uses_direct_navigation_and_a_transition_lock(self):
+    def test_workflow_uses_direct_navigation_without_waiting_for_other_workers(self):
         from jira_workflow import process_column
         source = inspect.getsource(process_column)
         self.assertIn("tickets_url = await tickets.get_attribute", source)
         self.assertIn("issue_url = await ticket.get_attribute", source)
-        self.assertIn("async with transition_lock:", source)
+        self.assertNotIn("async with _transition_lock:", source)
         self.assertNotIn("await search_box.click()", source)
         self.assertIn('page.locator("a.issue-link")', inspect.getsource(__import__("jira_workflow")._find_ticket_link))
 
