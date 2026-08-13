@@ -157,11 +157,12 @@ async function ensureJiraLogin(page) {
 function production(page) { return page.locator('#opsbar-transitions_more').filter({ hasText: /\bPRODUCTION\b/i }); }
 async function isLive(page) { const label = page.locator('#opsbar-transitions_more .dropdown-text'); return await label.isVisible().catch(() => false) && (await label.innerText()).trim().toUpperCase() === 'LIVE'; }
 async function confirm(page, name, success = null) {
-  const button = page.getByRole('button', { name, exact: true }), heading = page.getByRole('heading', { name });
+  const dialog = page.locator('section[role="dialog"]').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  const button = dialog.locator('#issue-workflow-transition-submit');
   await button.waitFor({ state: 'visible', timeout: 20000 });
   for (let i = 0; i < 6; i++) {
     await button.click().catch(() => {});
-    if (await heading.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true).catch(() => false)) return;
+    if (await dialog.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true).catch(() => false)) return;
     if (success && i >= 2 && await success()) return;
   }
   if (!success || !await success()) throw new Error(`Clicked '${name}' 6 times, but its modal never closed.`);
